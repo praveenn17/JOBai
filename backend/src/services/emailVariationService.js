@@ -1,18 +1,7 @@
-/**
- * Email Variation Engine
- * - 5 rotating templates (structure + style + opening + closing)
- * - Resume variant system (changes every 10 emails)
- * - Cover letter rewrite system
- * - Anti-spam: no repeated subject lines, no banned keywords
- * - Mandatory personalization per email
- */
-
-const Anthropic = require('@anthropic-ai/sdk');
+const { generateContent } = require('./geminiService');
 const { generateResumePDF, generateCoverLetterPDF } = require('./pdfService');
 const { generateDocxFromText } = require('./resumeService');
 const logger = require('../utils/logger');
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ─── 5 Email Templates (structure + tone variation) ───────────────────────────
 const EMAIL_TEMPLATES = [
@@ -61,7 +50,7 @@ const BANNED_PHRASES = [
   'team player', 'results-driven', 'detail-oriented'
 ];
 
-// ─── Anti-spam: subject line templates (rotated, never repeated consecutively) ─
+// ─── Anti-spam: subject line templates ────────────────────────────────────────
 const SUBJECT_TEMPLATES = [
   (role, company) => `${role} — ${company} fit?`,
   (role, company) => `Re: ${role} role at ${company}`,
@@ -71,9 +60,6 @@ const SUBJECT_TEMPLATES = [
   (role, company) => `Exploring ${role} opportunities — ${company}`,
 ];
 
-/**
- * Generate a fully varied, personalized cold email
- */
 async function generateVariedEmail({
   resumeText, companyName, role, companyInfo, personality,
   templateIndex, subjectVariant, existingSubjectsUsed = [],
@@ -81,11 +67,10 @@ async function generateVariedEmail({
 }) {
   const template = EMAIL_TEMPLATES[templateIndex % EMAIL_TEMPLATES.length];
 
-  // Build strategy guidance section
   const strategySection = strategyHints ? `
 LEARNED STRATEGY (apply these insights from past performance):
 - Opening style that works: ${strategyHints.bestOpening || 'not specified'}
-- Closing style that works: ${strategyHints.bestClosing || 'not specified'}  
+- Closing style that works: ${strategyHints.bestClosing || 'not specified'}
 - Target length: ${strategyHints.bestLength || '150-200'} words
 - Phrases that got responses: ${strategyHints.promote.join(', ') || 'none yet'}
 - Phrases to AVOID (poor performers): ${strategyHints.avoid.join(', ') || 'none yet'}
@@ -93,11 +78,10 @@ LEARNED STRATEGY (apply these insights from past performance):
 
   const personalizationGuide = {
     company_mention: 'Reference something specific about the company (product, mission, recent news)',
-    role_skills:     'Lead with a skill directly relevant to this specific role',
-    achievement:     'Open with a concrete achievement or result from candidate experience',
+    role_skills: 'Lead with a skill directly relevant to this specific role',
+    achievement: 'Open with a concrete achievement or result from candidate experience',
   }[personalizationType] || 'Reference something specific about the company';
 
-  // Pick a subject not recently used
   let subject = '';
   for (let i = 0; i < SUBJECT_TEMPLATES.length; i++) {
     const candidate = SUBJECT_TEMPLATES[(subjectVariant + i) % SUBJECT_TEMPLATES.length](role, companyName);
@@ -112,9 +96,7 @@ LEARNED STRATEGY (apply these insights from past performance):
     'formal_confident', 'friendly_professional',
     'concise_direct', 'enthusiastic_genuine', 'analytical_detailed'
   ];
-  const defaultPersonality = personalities[
-    Math.floor(Math.random() * personalities.length)
-  ];
+  const defaultPersonality = personalities[Math.floor(Math.random() * personalities.length)];
 
   const toneMap = {
     formal: 'Polite, structured, professional. No contractions.',
@@ -160,18 +142,13 @@ Return ONLY valid JSON (no markdown):
 }`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 800,
-      messages: [{ role: 'user', content: prompt }]
-    });
-    const clean = response.content[0].text.trim().replace(/```json|```/g, '').trim();
+    const rawText = await generateContent(prompt);
+    const clean = rawText.trim().replace(/```json|```/g, '').trim();
     const result = JSON.parse(clean);
 
-    // Safety: check for banned phrases
     const bodyLower = result.email_body.toLowerCase();
     if (BANNED_PHRASES.some(p => bodyLower.includes(p))) {
-      logger.warn('Banned phrase detected in generated email — consider regenerating', { companyName, role });
+      logger.warn('Banned phrase detected in generated email', { companyName, role });
     }
 
     return { ...result, template_index: templateIndex };
@@ -181,10 +158,6 @@ Return ONLY valid JSON (no markdown):
   }
 }
 
-/**
- * Generate a resume variant for attachment (changes every 10 emails)
- * variant 0: standard, variant 1: compact, variant 2: skills-first
- */
 async function generateResumeVariant(resumeText, candidateName, variant) {
   const variantStyles = {
     0: 'Standard format: Experience → Skills → Education → Certifications',
@@ -211,16 +184,11 @@ RULES:
 Return ONLY the rewritten resume text. No explanations.`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1500,
-      messages: [{ role: 'user', content: prompt }]
-    });
-    const variantText = response.content[0].text.trim();
+    const rawText = await generateContent(prompt);
+    const variantText = rawText.trim();
 
-    // Generate both PDF and DOCX of the variant
     const baseName = `resume_v${variant}_${Date.now()}`;
-    const pdfPath  = await generateResumePDF(variantText, baseName).catch(() => null);
+    const pdfPath = await generateResumePDF(variantText, baseName).catch(() => null);
     const docxPath = await generateDocxFromText(variantText, baseName).catch(() => null);
 
     return { text: variantText, pdf_path: pdfPath, docx_path: docxPath, variant };
@@ -230,9 +198,6 @@ Return ONLY the rewritten resume text. No explanations.`;
   }
 }
 
-/**
- * Generate a cover letter variant (rewrites tone + phrasing every cycle)
- */
 async function generateCoverLetterVariant(coverLetterText, candidateName, companyName, role, variant) {
   const toneVariants = [
     'Enthusiastic but professional — shows genuine excitement about the company specifically',
@@ -260,12 +225,8 @@ RULES:
 Return ONLY the rewritten cover letter text.`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 600,
-      messages: [{ role: 'user', content: prompt }]
-    });
-    const variantText = response.content[0].text.trim();
+    const rawText = await generateContent(prompt);
+    const variantText = rawText.trim();
     const pdfPath = await generateCoverLetterPDF(variantText, candidateName, companyName, role).catch(() => null);
     return { text: variantText, pdf_path: pdfPath };
   } catch (err) {
@@ -279,9 +240,7 @@ function getInitialStrategy(userId = null) {
     'formal_confident', 'friendly_professional',
     'concise_direct', 'enthusiastic_genuine', 'analytical_detailed'
   ];
-  const defaultPersonality = personalities[
-    Math.floor(Math.random() * personalities.length)
-  ];
+  const defaultPersonality = personalities[Math.floor(Math.random() * personalities.length)];
   return {
     best_tone: defaultPersonality,
     best_personalization: 'company_mention',
