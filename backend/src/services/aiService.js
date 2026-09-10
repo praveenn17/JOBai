@@ -2,6 +2,7 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const logger    = require('../utils/logger');
 const { getAtsContext, ATS_SYSTEM_KNOWLEDGE } = require('./atsKnowledge');
+const { generateContent } = require('./geminiService');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -48,12 +49,8 @@ Return ONLY valid JSON (no markdown):
 SCORING: 80-100=Excellent AUTO_APPLY, 50-79=Good AUTO_APPLY, 0-49=Low ASK_USER. Be strict and realistic.`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1200,
-      messages: [{ role: 'user', content: prompt }]
-    });
-    const clean = response.content[0].text.trim().replace(/```json|```/g, '').trim();
+    const rawText = await generateContent(prompt);
+    const clean = rawText.trim().replace(/```json|```/g, '').trim();
     let parsed;
     try {
       parsed = JSON.parse(clean);
