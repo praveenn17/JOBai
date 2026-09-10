@@ -20,7 +20,6 @@
     "cleanup": "node -e \"const fs=require('fs'),path=require('path'),dir=path.join(__dirname,'uploads/tailored');if(fs.existsSync(dir)){const files=fs.readdirSync(dir);const old=files.filter(f=>{const s=fs.statSync(path.join(dir,f));return Date.now()-s.mtimeMs>7*24*60*60*1000;});old.forEach(f=>fs.unlinkSync(path.join(dir,f)));console.log('Cleaned',old.length,'files');}\""
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.24.0",
     "@google/generative-ai": "^0.15.0",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^9.4.3",
