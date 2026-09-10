@@ -1,10 +1,7 @@
 'use strict';
-const Anthropic = require('@anthropic-ai/sdk');
 const logger    = require('../utils/logger');
 const { getAtsContext, ATS_SYSTEM_KNOWLEDGE } = require('./atsKnowledge');
 const { generateContent } = require('./geminiService');
-
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 async function matchJobToResume(resumeText, jobDescription, jobTitle = '') {
   const prompt = `You are a world-class ATS specialist and senior recruiter with 15 years of experience.
@@ -108,12 +105,8 @@ MANDATORY RULES:
 Return ONLY the complete tailored resume text with clear sections. No JSON, no explanations.`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2500,
-      messages: [{ role: 'user', content: prompt }]
-    });
-    return response.content[0].text.trim();
+    const rawText = await generateContent(prompt);
+    return rawText.trim();
   } catch (err) {
     logger.error('Resume tailoring failed', { error: err.message });
     throw new Error(`Resume tailoring failed: ${err.message}`);
@@ -124,12 +117,9 @@ async function generateApplicationAnswer(question, resumeText, jobDescription, w
   // PART A: Question Classification
   let questionType = 'general';
   try {
-    const cr = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 20,
-      messages: [{ role: 'user', content: `Classify this job application question into ONE category. Return ONLY the category word.\nCategories: salary | gap | relocation | why_hire | general\nQuestion: "${question}"` }]
-    });
-    questionType = cr.content[0].text.trim().toLowerCase().replace(/[^a-z_]/g, '');
+    const classifyPrompt = `Classify this job application question into ONE category. Return ONLY the category word.\nCategories: salary | gap | relocation | why_hire | general\nQuestion: "${question}"`;
+    const crText = await generateContent(classifyPrompt);
+    questionType = crText.trim().toLowerCase().replace(/[^a-z_]/g, '');
   } catch { questionType = 'general'; }
 
   const strategies = {
@@ -174,28 +164,16 @@ Length: ${questionType === 'why_hire' ? '120-180' : `${Math.round(wordLimit * 0.
 Write ONLY the answer. No preamble.`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 500,
-      messages: [{ role: 'user', content: generatePrompt }]
-    });
-
-    const answer = response.content[0].text.trim();
+    const answerText = await generateContent(generatePrompt);
+    const answer = answerText.trim();
     const banned = ['i am passionate', 'team player', 'hard worker', 'quick learner', 'results-driven'];
     const hasBanned = banned.some(b => answer.toLowerCase().includes(b));
     const wordCount = answer.split(/\s+/).length;
 
     if (wordCount < 30 || hasBanned) {
-      const retryRes = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 500,
-        messages: [
-          { role: 'user', content: generatePrompt },
-          { role: 'assistant', content: answer },
-          { role: 'user', content: 'This answer contains generic phrases or is too short. Rewrite — be specific, concrete, avoid all clichés.' }
-        ]
-      });
-      return retryRes.content[0].text.trim();
+      const retryPrompt = generatePrompt + '\n\nPrevious answer was too short or contained generic phrases. Rewrite — be specific, concrete, avoid all clichés.';
+      const retryText = await generateContent(retryPrompt);
+      return retryText.trim();
     }
     return answer;
   } catch (err) {
@@ -233,12 +211,8 @@ Return JSON:
 REQUIREMENTS: Personalized to company, highlights top 3 skills/achievements, no AI clichés, no fake claims.`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 2000,
-      messages: [{ role: 'user', content: prompt }]
-    });
-    const clean = response.content[0].text.trim().replace(/```json|```/g, '').trim();
+    const rawText = await generateContent(prompt);
+    const clean = rawText.trim().replace(/```json|```/g, '').trim();
     return JSON.parse(clean);
   } catch (err) {
     logger.error('Email generation failed', { error: err.message });
@@ -248,63 +222,42 @@ REQUIREMENTS: Personalized to company, highlights top 3 skills/achievements, no 
 
 async function discoverJobs(resumeText, preferences) {
   const userPrefs = preferences || {};
-  // Note: Anthropic web search tool type 'web_search_20250305' requires @anthropic-ai/sdk >= 0.27.0 (currently ^0.24.0 in package.json).
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
-      tools: [
-        {
-          type: 'web_search_20250305',
-          name: 'web_search',
-        }
-      ],
-      system: `You are a job discovery assistant.
-      Search the web for REAL, CURRENT job listings that
-      match the candidate's profile. Only return jobs that
-      actually exist right now with real apply URLs.
-      Return results as a JSON array only, no other text.`,
-      messages: [
-        {
-          role: 'user',
-          content: `Find real job listings for this candidate.
-          
-          CANDIDATE PROFILE:
-          Preferred roles: ${userPrefs.preferred_roles || 'Software Engineer'}
-          Preferred locations: ${userPrefs.preferred_locations || 'Remote'}
-          Skills: ${userPrefs.skills || ''}
-          Job types: ${userPrefs.job_types || 'Full-time'}
-          
-          RESUME SUMMARY (first 500 chars):
-          ${resumeText.substring(0, 500)}
-          
-          Search for: "${userPrefs.preferred_roles || 'Software Engineer'} jobs ${userPrefs.preferred_locations || 'remote'} 2025"
-          
-          Return a JSON array of up to 10 jobs:
-          [
-            {
-              "title": "exact job title",
-              "company": "real company name",
-              "location": "city or Remote",
-              "description": "2-3 sentence summary",
-              "apply_url": "real URL to apply",
-              "match_estimate": 85,
-              "reason": "why this matches the candidate",
-              "source": "web_search"
-            }
-          ]
-          Only return the JSON array, nothing else.`,
-        }
-      ],
-    });
+    const prompt = `You are a job discovery assistant helping a candidate find real, current job opportunities.
 
-    const textBlock = response.content
-      .filter(b => b.type === 'text')
-      .pop();
+CANDIDATE PROFILE:
+Preferred roles: ${userPrefs.preferred_roles || 'Software Engineer'}
+Preferred locations: ${userPrefs.preferred_locations || 'Remote, Bangalore'}
+Skills: ${userPrefs.skills || ''}
+Job types: ${userPrefs.job_types || 'Full-time, Internship'}
+
+RESUME SUMMARY:
+${resumeText.substring(0, 600)}
+
+TASK: Generate 8 highly specific, realistic job leads that this candidate should apply to RIGHT NOW based on their profile. Focus on Indian job market (Bangalore, Pune, Hyderabad, Remote).
+
+Only suggest roles at REAL, well-known companies that actively hire for this profile. Base suggestions on companies known to hire for these skills.
+
+Return ONLY a valid JSON array, no markdown, no explanation:
+[
+  {
+    "title": "exact job title",
+    "company": "real company name",
+    "location": "city or Remote",
+    "description": "2-3 sentence summary of the role",
+    "apply_url": "https://careers.[company].com or https://www.linkedin.com/jobs/ or https://internshala.com/",
+    "match_estimate": <60-95>,
+    "reason": "one sentence why this matches candidate",
+    "source": "ai_suggestion"
+  }
+]`;
+
+    const rawText = await generateContent(prompt);
     let jobs = [];
     try {
-      const clean = textBlock ? textBlock.text.trim().replace(/```json|```/g, '').trim() : '[]';
+      const clean = rawText.trim().replace(/```json|```/g, '').trim();
       jobs = JSON.parse(clean);
+      if (!Array.isArray(jobs)) jobs = [];
     } catch {
       jobs = [];
     }
@@ -352,12 +305,8 @@ Analyze patterns and return ONLY valid JSON:
 }`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 800,
-      messages: [{ role: 'user', content: prompt }]
-    });
-    const clean = response.content[0].text.trim().replace(/```json|```/g, '').trim();
+    const rawText = await generateContent(prompt);
+    const clean = rawText.trim().replace(/```json|```/g, '').trim();
     return JSON.parse(clean);
   } catch (err) {
     logger.error('Learning analysis failed', { error: err.message });
