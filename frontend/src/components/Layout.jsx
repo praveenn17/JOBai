@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { LayoutDashboard, FileText, Crosshair, SendHorizonal, Mail, Compass, LogOut, Menu, X, Zap, Settings, Brain, WifiOff, Shield, BarChart2, Scissors, CheckCircle } from "lucide-react";
+import { useLocation, useNavigate, NavLink, Outlet } from 'react-router-dom';
 import useAuthStore from '../store/authStore';
 import { useToast } from './Toast';
 import api from '../services/api';

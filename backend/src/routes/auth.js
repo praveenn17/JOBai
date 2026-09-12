@@ -403,4 +403,226 @@ router.delete('/account', authMiddleware, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+// ─── NEW: Two-Factor Auth Routes ─────────────────────────────────────────────
+
+const otpService = require('../services/otpService');
+const otpLimiter = require('../middleware/otpRateLimit');
+
+// POST /api/auth/signup-step1
+// Validates registration data, hashes password, sends OTP (does NOT create user yet)
+router.post('/signup-step1', otpLimiter.signupStep1, async (req, res) => {
+  try {
+    const { name, email, password, confirmPassword, phone } = req.body;
+
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Name, email, and password are required.' });
+    }
+    const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRe.test(email)) {
+      return res.status(400).json({ error: 'Please enter a valid email address.' });
+    }
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    }
+    if (confirmPassword && confirmPassword !== password) {
+      return res.status(400).json({ error: 'Passwords do not match.' });
+    }
+
+    const db = getDb();
+    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    if (existing) {
+      return res.status(409).json({ error: 'Email already registered. Please sign in.' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const pendingData = { name, email, password_hash: passwordHash, phone: phone || null };
+
+    await otpService.sendOtp(email, 'signup_verify', pendingData);
+
+    logger.info('Signup step1 OTP sent', { email: isProd ? '[redacted]' : email });
+    res.json({ message: 'OTP sent to your email. It expires in 10 minutes.', expires_in: 600 });
+  } catch (err) {
+    const status = err.message.includes('wait') || err.message.includes('Too many') ? 429 : 400;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// POST /api/auth/signup-step2
+// Verifies OTP, creates user, returns JWT
+router.post('/signup-step2', async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) {
+      return res.status(400).json({ error: 'Email and OTP are required.' });
+    }
+
+    const result = await otpService.verifyOtp(email, otp, 'signup_verify');
+    const pending = result.details;
+    if (!pending || !pending.password_hash) {
+      return res.status(400).json({ error: 'Signup session expired. Please start again.' });
+    }
+
+    const db = getDb();
+
+    // Re-check email uniqueness (race condition guard)
+    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    if (existing) {
+      return res.status(409).json({ error: 'Email already registered.' });
+    }
+
+    // FIFO eviction
+    const MAX_USERS = parseInt(process.env.MAX_USERS) || 15;
+    const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+    if (userCount >= MAX_USERS) {
+      const oldest = db.prepare('SELECT id FROM users ORDER BY created_at ASC LIMIT 1').get();
+      if (oldest) {
+        db.prepare('DELETE FROM users WHERE id = ?').run(oldest.id);
+        logger.info('FIFO user eviction', { evicted: oldest.id });
+      }
+    }
+
+    const userId = uuidv4();
+    db.prepare(`
+      INSERT INTO users (id, name, email, password_hash, phone, email_verified)
+      VALUES (?, ?, ?, ?, ?, 1)
+    `).run(userId, pending.name, email, pending.password_hash, pending.phone);
+
+    // Create default preferences row
+    db.prepare('INSERT INTO user_preferences (id, user_id) VALUES (?, ?)').run(uuidv4(), userId);
+
+    // Create empty user_profiles row
+    db.prepare('INSERT INTO user_profiles (id, user_id) VALUES (?, ?)').run(uuidv4(), userId);
+
+    const token = jwt.sign(
+      { id: userId, email, name: pending.name },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+
+    logger.info('New user created via 2FA signup', { userId, email: isProd ? '[redacted]' : email });
+    res.status(201).json({
+      token,
+      user: { id: userId, name: pending.name, email, phone: pending.phone, email_verified: 1 },
+      is_new_user: true,
+      profile_complete: false,
+      completion_percentage: 0,
+    });
+  } catch (err) {
+    const status = err.message.includes('Too many') || err.message.includes('attempts') ? 429
+                 : err.message.includes('expired') || err.message.includes('Invalid') ? 400
+                 : 500;
+    logger.error('Signup step2 error', { error: err.message });
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// POST /api/auth/signin-step1
+// Validates credentials, sends OTP (does NOT return JWT yet)
+router.post('/signin-step1', otpLimiter.signinStep1, async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required.' });
+    }
+
+    const db = getDb();
+    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    // Use same generic error for both missing user and wrong password (prevents enumeration)
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) {
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+
+    await otpService.sendOtp(email, 'signin_verify');
+
+    logger.info('Signin step1 OTP sent', { userId: user.id });
+    res.json({ message: 'OTP sent to your email. It expires in 10 minutes.', expires_in: 600 });
+  } catch (err) {
+    const status = err.message.includes('wait') || err.message.includes('Too many') ? 429 : 400;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// POST /api/auth/signin-step2
+// Verifies OTP, returns JWT + profile completion status
+router.post('/signin-step2', async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) {
+      return res.status(400).json({ error: 'Email and OTP are required.' });
+    }
+
+    await otpService.verifyOtp(email, otp, 'signin_verify');
+
+    const db = getDb();
+    const user = db.prepare(
+      'SELECT id, name, email, phone, location, email_verified FROM users WHERE email = ?'
+    ).get(email);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found.' });
+    }
+
+    // Ensure profile row exists (safety net for legacy users)
+    let profile = db.prepare('SELECT * FROM user_profiles WHERE user_id = ?').get(user.id);
+    if (!profile) {
+      db.prepare('INSERT OR IGNORE INTO user_profiles (id, user_id) VALUES (?, ?)').run(uuidv4(), user.id);
+      profile = db.prepare('SELECT * FROM user_profiles WHERE user_id = ?').get(user.id);
+    }
+
+    const profileComplete = profile ? (profile.is_complete === 1) : false;
+    const completionPct = profile ? (profile.completion_percentage || 0) : 0;
+
+    // Mark email_verified = 1 if not already (since they passed OTP)
+    if (!user.email_verified) {
+      db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(user.id);
+    }
+
+    const token = jwt.sign(
+      { id: user.id, email: user.email, name: user.name },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+
+    logger.info('User signed in via 2FA', { userId: user.id });
+    res.json({
+      token,
+      user: { ...user, email_verified: 1 },
+      is_new_user: false,
+      profile_complete: profileComplete,
+      completion_percentage: completionPct,
+    });
+  } catch (err) {
+    const status = err.message.includes('Too many') || err.message.includes('attempts') ? 429
+                 : err.message.includes('expired') || err.message.includes('Invalid') ? 400
+                 : 500;
+    logger.error('Signin step2 error', { error: err.message });
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// POST /api/auth/resend-otp
+// Resend OTP for any purpose
+router.post('/resend-otp', otpLimiter.resendOtp, async (req, res) => {
+  try {
+    const { email, purpose } = req.body;
+    if (!email || !purpose) {
+      return res.status(400).json({ error: 'Email and purpose are required.' });
+    }
+    const validPurposes = ['signup_verify', 'signin_verify'];
+    if (!validPurposes.includes(purpose)) {
+      return res.status(400).json({ error: 'Invalid purpose.' });
+    }
+
+    await otpService.sendOtp(email, purpose);
+    res.json({ message: 'New OTP sent to your email.', expires_in: 600 });
+  } catch (err) {
+    const status = err.message.includes('wait') || err.message.includes('Too many') ? 429 : 400;
+    res.status(status).json({ error: err.message });
+  }
+});
+
 module.exports = router;
+

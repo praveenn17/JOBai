@@ -35,6 +35,7 @@ const limitsRoutes        = require('./routes/limits');
 const notificationsRoutes = require('./routes/notifications');
 const resumeTailorRoutes  = require('./routes/resumeTailor');
 const eligibilityRoutes   = require('./routes/eligibility');
+const profileRoutes       = require('./routes/profile');
 const authMiddleware      = require('./middleware/auth');
 
 const app = express();
@@ -137,6 +138,7 @@ app.use('/api/limits', limitsRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/resume-tailor', resumeTailorRoutes);
 app.use('/api/eligibility', eligibilityRoutes);
+app.use('/api/profile', profileRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -147,7 +149,7 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
     version: '1.0.0',
     environment: process.env.NODE_ENV || 'development',
-    ai: !!process.env.ANTHROPIC_API_KEY ? 'configured' : 'not_configured',
+    ai: !!process.env.GEMINI_API_KEY ? 'configured' : 'not_configured',
     database: db,
   });
 });
@@ -450,7 +452,7 @@ setupDatabase();
 // Startup validation — fail fast with clear messages
 const missing = [];
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.includes('change_this')) missing.push('JWT_SECRET');
-if (!process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY.includes('your-api-key')) missing.push('ANTHROPIC_API_KEY');
+if (!process.env.GEMINI_API_KEY) missing.push('GEMINI_API_KEY');
 if (missing.length > 0) {
   logger.warn(`⚠️  Missing/default env vars: ${missing.join(', ')} — AI features will not work.`);
 }
@@ -479,7 +481,7 @@ cron.schedule('0 4 * * 0', () => {
 const server = app.listen(PORT, () => {
   logger.info(`🚀 JobAI Backend running on port ${PORT}`);
   logger.info(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  logger.info(`🤖 AI: ${process.env.ANTHROPIC_API_KEY ? 'Configured ✅' : 'Not configured ❌'}`);
+  logger.info(`🤖 AI: ${process.env.GEMINI_API_KEY ? 'Configured ✅' : 'Not configured ❌'}`);
 });
 
 /**

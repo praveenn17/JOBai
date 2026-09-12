@@ -28,7 +28,14 @@ export const ENDPOINTS = {
     resetPassword:      '/auth/reset-password',     // POST  { token, new_password }
     verifyEmail:        '/auth/verify-email',       // GET   ?token=xxx  (email link click)
     resendVerification: '/auth/resend-verification',// POST  (requires auth)
+    // ── Two-factor auth ────────────────────────────────────────────────────
+    signupStep1:        '/auth/signup-step1',       // POST  { name, email, password, phone? }
+    signupStep2:        '/auth/signup-step2',       // POST  { email, otp }
+    signinStep1:        '/auth/signin-step1',       // POST  { email, password }
+    signinStep2:        '/auth/signin-step2',       // POST  { email, otp }
+    resendOtp:          '/auth/resend-otp',         // POST  { email, purpose }
   },
+
 
   // ── Resume ───────────────────────────────────────────────────────────────
   resume: {
@@ -103,6 +110,7 @@ export const ENDPOINTS = {
   // ── Health ────────────────────────────────────────────────────────────────────
   health: '/health',                              // GET (no /api prefix — call axios directly with full URL)
 
+
   // ── Resume Tailor ─────────────────────────────────────────────────────────────
   resumeTailor: {
     tailor:   '/resume-tailor/tailor',            // POST  { job_description, job_title? } → { tailored_text, pdf_url, docx_url }
@@ -114,7 +122,27 @@ export const ENDPOINTS = {
     start:  '/eligibility/start',                 // POST  { job_description, job_title? } → { session_id, first_question, ... }
     answer: '/eligibility/answer',                // POST  { session_id, answer } → next question OR verdict
   },
+
+  // ── Profile & Onboarding ──────────────────────────────────────────────────────
+  profile: {
+    get:                '/profile',               // GET   → { profile, projects, experience, certifications, achievements }
+    personal:           '/profile/personal',      // PUT   → { message, completion_percentage }
+    academic:           '/profile/academic',      // PUT
+    skills:             '/profile/skills',        // PUT
+    links:              '/profile/links',         // PUT
+    preferences:        '/profile/preferences',   // PUT
+    summary:            '/profile/summary',       // PUT
+    projects:           '/profile/projects',      // GET | POST
+    projectById:        '/profile/projects/:id',  // PUT | DELETE
+    experience:         '/profile/experience',    // GET | POST
+    experienceById:     '/profile/experience/:id',// PUT | DELETE
+    certifications:     '/profile/certifications',       // GET | POST
+    certificationById:  '/profile/certifications/:id',   // PUT | DELETE
+    achievements:       '/profile/achievements',         // GET | POST
+    achievementById:    '/profile/achievements/:id',     // PUT | DELETE
+  },
 };
+
 
 /**
  * Replace :param tokens in a URL template.

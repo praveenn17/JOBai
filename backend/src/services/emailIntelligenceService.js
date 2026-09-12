@@ -3,12 +3,12 @@
  * Steps 2–10: Pattern analysis → Template evolution → Adaptive generation
  */
 
-const Anthropic = require('@anthropic-ai/sdk');
+const { generateContent } = require('./geminiService');
 const { getDb } = require('../database/db');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
 
 const ANALYSIS_THRESHOLD = 10; // re-evaluate every 10 emails with outcomes
 const TEMPLATE_COUNT = 5;
@@ -181,11 +181,8 @@ Analyze patterns and return ONLY valid JSON:
 }`;
 
   try {
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514', max_tokens: 800,
-      messages: [{ role: 'user', content: prompt }]
-    });
-    const clean = response.content[0].text.trim().replace(/```json|```/g, '').trim();
+    const rawText = await generateContent(prompt);
+    const clean = rawText.trim().replace(/```json|```/g, '').trim();
     const insights = JSON.parse(clean);
 
     // Persist strategy
@@ -331,3 +328,4 @@ module.exports = {
   getStrategy, selectTemplateWeighted, trackSubjectSent,
   getPerformanceMetrics, getPendingOutcomes,
 };
+

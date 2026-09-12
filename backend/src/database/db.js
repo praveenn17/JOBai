@@ -464,6 +464,269 @@ const MIGRATIONS = [
       d.exec(`CREATE INDEX IF NOT EXISTS idx_rate_limits_time ON rate_limits(performed_at);`);
     },
   },
+  {
+    id: '005_otp_tokens',
+    up(d) {
+      d.exec(`
+        CREATE TABLE IF NOT EXISTS otp_tokens (
+          id              TEXT PRIMARY KEY,
+          email           TEXT NOT NULL,
+          otp             TEXT NOT NULL,
+          purpose         TEXT NOT NULL,
+          attempts        INTEGER DEFAULT 0,
+          max_attempts    INTEGER DEFAULT 5,
+          expires_at      TEXT NOT NULL,
+          used            INTEGER DEFAULT 0,
+          resend_count    INTEGER DEFAULT 0,
+          last_resend_at  TEXT,
+          details         TEXT,
+          created_at      TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_otp_email_purpose ON otp_tokens(email, purpose, used, expires_at);
+      `);
+    },
+  },
+  {
+    id: '006_user_profiles',
+    up(d) {
+      d.exec(`
+        CREATE TABLE IF NOT EXISTS user_profiles (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL UNIQUE,
+
+          -- Personal
+          first_name TEXT,
+          middle_name TEXT,
+          last_name TEXT,
+          date_of_birth TEXT,
+          gender TEXT,
+          alternate_phone TEXT,
+
+          -- Address
+          current_address TEXT,
+          permanent_address TEXT,
+          city TEXT,
+          state TEXT,
+          country TEXT DEFAULT 'India',
+          pincode TEXT,
+
+          -- Parent/Guardian
+          parent_name TEXT,
+          parent_phone TEXT,
+          parent_relation TEXT,
+          emergency_contact_name TEXT,
+          emergency_contact_phone TEXT,
+
+          -- Academic: Class 10
+          class10_school TEXT,
+          class10_board TEXT,
+          class10_year TEXT,
+          class10_percentage TEXT,
+          class10_cgpa TEXT,
+
+          -- Academic: Class 12
+          class12_school TEXT,
+          class12_board TEXT,
+          class12_stream TEXT,
+          class12_year TEXT,
+          class12_percentage TEXT,
+          class12_cgpa TEXT,
+
+          -- Academic: Diploma
+          has_diploma INTEGER DEFAULT 0,
+          diploma_institute TEXT,
+          diploma_course TEXT,
+          diploma_specialization TEXT,
+          diploma_year TEXT,
+          diploma_percentage TEXT,
+
+          -- Academic: UG
+          ug_college TEXT,
+          ug_university TEXT,
+          ug_degree TEXT,
+          ug_course TEXT,
+          ug_branch TEXT,
+          ug_enrollment_year TEXT,
+          ug_graduation_year TEXT,
+          ug_current_semester TEXT,
+          ug_cgpa TEXT,
+          ug_percentage TEXT,
+          ug_backlogs INTEGER DEFAULT 0,
+          ug_active_backlogs INTEGER DEFAULT 0,
+
+          -- Academic: PG
+          has_pg INTEGER DEFAULT 0,
+          pg_college TEXT,
+          pg_degree TEXT,
+          pg_specialization TEXT,
+          pg_year TEXT,
+          pg_cgpa TEXT,
+          pg_percentage TEXT,
+
+          -- Skills (JSON arrays stored as TEXT)
+          technical_skills TEXT DEFAULT '[]',
+          programming_languages TEXT DEFAULT '[]',
+          frameworks TEXT DEFAULT '[]',
+          databases TEXT DEFAULT '[]',
+          cloud_skills TEXT DEFAULT '[]',
+          dev_tools TEXT DEFAULT '[]',
+          soft_skills TEXT DEFAULT '[]',
+          languages_known TEXT DEFAULT '[]',
+
+          -- Professional Links
+          portfolio_url TEXT,
+          github_url TEXT,
+          linkedin_url TEXT,
+          gitlab_url TEXT,
+          personal_website TEXT,
+          leetcode_url TEXT,
+          hackerrank_url TEXT,
+          codechef_url TEXT,
+          codeforces_url TEXT,
+          kaggle_url TEXT,
+          other_links TEXT DEFAULT '[]',
+
+          -- Professional Summary
+          professional_summary TEXT,
+          career_objective TEXT,
+          areas_of_interest TEXT,
+
+          -- Job Preferences
+          preferred_roles TEXT DEFAULT '[]',
+          preferred_industries TEXT DEFAULT '[]',
+          preferred_domains TEXT DEFAULT '[]',
+          preferred_employment_type TEXT DEFAULT '[]',
+          preferred_work_mode TEXT,
+          preferred_locations TEXT DEFAULT '[]',
+          willing_to_relocate INTEGER DEFAULT 0,
+          expected_salary TEXT,
+          notice_period TEXT,
+          availability_to_join TEXT,
+          career_interests TEXT,
+
+          -- Placement Info
+          current_placement_status TEXT DEFAULT 'actively_looking',
+          placement_eligibility INTEGER DEFAULT 1,
+          graduation_year TEXT,
+          current_academic_status TEXT,
+          is_fresher INTEGER DEFAULT 1,
+          available_for_interviews INTEGER DEFAULT 1,
+          preferred_interview_mode TEXT DEFAULT 'either',
+
+          -- Completion tracking
+          completion_percentage INTEGER DEFAULT 0,
+          completed_sections TEXT DEFAULT '[]',
+          is_complete INTEGER DEFAULT 0,
+
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_profiles_user ON user_profiles(user_id);
+      `);
+    },
+  },
+  {
+    id: '007_user_projects',
+    up(d) {
+      d.exec(`
+        CREATE TABLE IF NOT EXISTS user_projects (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT,
+          problem_statement TEXT,
+          technologies TEXT DEFAULT '[]',
+          programming_languages TEXT DEFAULT '[]',
+          frameworks TEXT DEFAULT '[]',
+          user_role TEXT,
+          duration TEXT,
+          team_size INTEGER DEFAULT 1,
+          is_team_project INTEGER DEFAULT 0,
+          project_url TEXT,
+          github_url TEXT,
+          live_demo_url TEXT,
+          key_features TEXT,
+          major_contributions TEXT,
+          outcome TEXT,
+          display_order INTEGER DEFAULT 0,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_projects_user ON user_projects(user_id);
+      `);
+    },
+  },
+  {
+    id: '008_user_experience',
+    up(d) {
+      d.exec(`
+        CREATE TABLE IF NOT EXISTS user_experience (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          company_name TEXT NOT NULL,
+          job_title TEXT NOT NULL,
+          employment_type TEXT,
+          start_date TEXT,
+          end_date TEXT,
+          is_current INTEGER DEFAULT 0,
+          location TEXT,
+          is_remote INTEGER DEFAULT 0,
+          responsibilities TEXT,
+          achievements TEXT,
+          technologies TEXT DEFAULT '[]',
+          key_contributions TEXT,
+          display_order INTEGER DEFAULT 0,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_experience_user ON user_experience(user_id);
+      `);
+    },
+  },
+  {
+    id: '009_user_certifications',
+    up(d) {
+      d.exec(`
+        CREATE TABLE IF NOT EXISTS user_certifications (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          issuing_org TEXT NOT NULL,
+          issue_date TEXT,
+          expiry_date TEXT,
+          credential_id TEXT,
+          credential_url TEXT,
+          display_order INTEGER DEFAULT 0,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_certs_user ON user_certifications(user_id);
+      `);
+    },
+  },
+  {
+    id: '010_user_achievements',
+    up(d) {
+      d.exec(`
+        CREATE TABLE IF NOT EXISTS user_achievements (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          type TEXT,
+          title TEXT NOT NULL,
+          description TEXT,
+          date TEXT,
+          organization TEXT,
+          url TEXT,
+          display_order INTEGER DEFAULT 0,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_achievements_user ON user_achievements(user_id);
+      `);
+    },
+  },
 ];
 
 function runMigrations(database) {
@@ -601,6 +864,12 @@ function runMaintenance() {
 
     database.prepare(`DELETE FROM notifications
       WHERE read = 1 AND created_at < datetime('now', '-30 days')`).run();
+
+    // Clean expired / used OTP tokens
+    try {
+      database.prepare(`DELETE FROM otp_tokens
+        WHERE used = 1 OR expires_at < datetime('now', '-1 day')`).run();
+    } catch (_) {} // table may not exist on very old DBs
   });
 
   try {

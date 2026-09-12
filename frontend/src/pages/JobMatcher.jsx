@@ -40,7 +40,7 @@ export default function JobMatcher() {
       const r = await api.post(ENDPOINTS.jobs.analyze, { jobs: valid });
       setResults(r.data.results || []);
       const autoCount = (r.data.results || []).filter(x => x.status === 'auto_apply').length;
-      const askCount  = (r.data.results || []).filter(x => x.status === 'ask_user').length;
+      const askCount = (r.data.results || []).filter(x => x.status === 'ask_user').length;
       toast.success(`Analysis complete — ${autoCount} AUTO APPLY, ${askCount} need your confirmation.`);
     } catch (err) {
       toast.error(err.message || 'Analysis failed. Make sure you have an active resume uploaded.');
@@ -181,8 +181,8 @@ export default function JobMatcher() {
                 border: res.status === 'auto_apply'
                   ? '1px solid rgba(34,197,94,0.35)'
                   : res.status === 'ask_user'
-                  ? '1px solid rgba(245,158,11,0.35)'
-                  : '1px solid #1a2236'
+                    ? '1px solid rgba(245,158,11,0.35)'
+                    : '1px solid #1a2236'
               }}>
                 {/* Header Row */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
@@ -194,30 +194,29 @@ export default function JobMatcher() {
                       <Badge color={statusColor(res.status)}>
                         {res.status === 'auto_apply' ? '✅ AUTO APPLY'
                           : res.status === 'ask_user' ? '⚠️ ASK USER'
-                          : res.status?.replace(/_/g, ' ').toUpperCase()}
+                            : res.status?.replace(/_/g, ' ').toUpperCase()}
                       </Badge>
                       {res.recommendation === 'AUTO_APPLY' && <Badge color="green">≥50% Match</Badge>}
                       {res.recommendation === 'ASK_USER' && <Badge color="yellow">&lt;50% — Confirmation Required</Badge>}
                     </div>
                   </div>
 
-                {/* ASK_USER warning panel */}
-                {res.status === 'ask_user' && (
-                  <div style={{ margin: '10px 0 0', padding: '10px 14px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-                      <AlertTriangle size={14} color="#f59e0b" />
-                      <span style={{ fontSize: 13, color: '#fbbf24', fontWeight: 600 }}>Low Match ({res.match_score}%) — Your confirmation required before applying</span>
-                    </div>
-                    {res.missing_requirements?.length > 0 && (
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                        {res.missing_requirements.map(r => (
-                          <Badge key={r} color="yellow">Missing: {r}</Badge>
-                        ))}
+                  {/* ASK_USER warning panel */}
+                  {res.status === 'ask_user' && (
+                    <div style={{ margin: '10px 0 0', padding: '10px 14px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+                        <AlertTriangle size={14} color="#f59e0b" />
+                        <span style={{ fontSize: 13, color: '#fbbf24', fontWeight: 600 }}>Low Match ({res.match_score}%) — Your confirmation required before applying</span>
                       </div>
-                    )}
-                  </div>
-                )}
-                  </div>
+                      {res.missing_requirements?.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {res.missing_requirements.map(r => (
+                            <Badge key={r} color="yellow">Missing: {r}</Badge>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {res.apply_url && <a href={res.apply_url} target="_blank" rel="noreferrer"><Btn variant="ghost" size="sm"><ExternalLink size={13} /> Open Job</Btn></a>}
                   {res.job_id && <button onClick={() => toggle(res.job_id)} style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer' }}>{expanded[res.job_id] ? <ChevronUp /> : <ChevronDown />}</button>}
                 </div>
@@ -298,7 +297,7 @@ export default function JobMatcher() {
                           {answer && activeJobId === res.job_id && (
                             <div style={{ background: 'rgba(37,99,235,0.07)', border: '1px solid rgba(37,99,235,0.2)', borderRadius: 8, padding: 12 }}>
                               <p style={{ fontSize: 13, color: '#93c5fd', lineHeight: 1.7 }}>{answer}</p>
-                              <p style={{ fontSize: 11, color: '#334155', marginTop: 6, fontFamily: 'Space Mono,monospace' }}>Tone: {personality.replace('_',' ')}</p>
+                              <p style={{ fontSize: 11, color: '#334155', marginTop: 6, fontFamily: 'Space Mono,monospace' }}>Tone: {personality.replace('_', ' ')}</p>
                             </div>
                           )}
                         </div>
