@@ -36,6 +36,8 @@ const notificationsRoutes = require('./routes/notifications');
 const resumeTailorRoutes  = require('./routes/resumeTailor');
 const eligibilityRoutes   = require('./routes/eligibility');
 const profileRoutes       = require('./routes/profile');
+const resumeBuilderRoutes = require('./routes/resumeBuilder');
+const resumeAnalyzerRoutes = require('./routes/resumeAnalyzer');
 const authMiddleware      = require('./middleware/auth');
 
 const app = express();
@@ -139,6 +141,8 @@ app.use('/api/notifications', notificationsRoutes);
 app.use('/api/resume-tailor', resumeTailorRoutes);
 app.use('/api/eligibility', eligibilityRoutes);
 app.use('/api/profile', profileRoutes);
+app.use('/api/resume-builder', resumeBuilderRoutes);
+app.use('/api/resume-analyzer', resumeAnalyzerRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

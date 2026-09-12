@@ -27,6 +27,8 @@ const Settings       = lazy(() => import('./pages/Settings'));
 const NotFound       = lazy(() => import('./pages/NotFound'));
 const ResumeTailor   = lazy(() => import('./pages/ResumeTailor'));
 const EligibilityChecker = lazy(() => import('./pages/EligibilityChecker'));
+const ResumeBuilder  = lazy(() => import('./pages/ResumeBuilder'));
+const ResumeAnalyzer = lazy(() => import('./pages/ResumeAnalyzer'));
 
 /**
  * PrivateRoute — guards authenticated routes.
@@ -112,6 +114,8 @@ export default function App() {
                 <Route path="settings"        element={<Settings />} />
                 <Route path="resume-tailor"   element={<ResumeTailor />} />
                 <Route path="eligibility"     element={<EligibilityChecker />} />
+                <Route path="resume-builder"  element={<ResumeBuilder />} />
+                <Route path="resume-analyzer" element={<ResumeAnalyzer />} />
               </Route>
 
               <Route path="*" element={<NotFound />} />

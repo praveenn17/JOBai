@@ -9,6 +9,9 @@ const logger = require('../utils/logger');
 
 const router = express.Router();
 
+const { generateText } = require('../services/geminiService');
+const { buildUserContext } = require('../utils/buildUserContext');
+
 // Helper: get active resume for user
 function getActiveResume(userId) {
   const db = getDb();
@@ -20,15 +23,73 @@ function getMatchThreshold(userId) {
   const db = getDb();
   const insights = db.prepare('SELECT recommended_min_score FROM learning_insights WHERE user_id = ?').get(userId);
   const score = insights?.recommended_min_score;
-  // Clamp between 40 and 90 for safety — default 50 per spec
   if (score && score >= 40 && score <= 90) return score;
   return 50;
 }
 
+// Helper: fetch full user context
+function getUserFullContext(userId, resume) {
+  const db = getDb();
+  const profile = db.prepare('SELECT * FROM user_profiles WHERE user_id = ?').get(userId);
+  const projects = db.prepare('SELECT * FROM user_projects WHERE user_id = ? ORDER BY display_order').all(userId);
+  const experience = db.prepare('SELECT * FROM user_experience WHERE user_id = ? ORDER BY display_order').all(userId);
+  const certs = db.prepare('SELECT * FROM user_certifications WHERE user_id = ? ORDER BY display_order').all(userId);
+  const achievements = db.prepare('SELECT * FROM user_achievements WHERE user_id = ? ORDER BY display_order').all(userId);
+  const user = db.prepare('SELECT email, phone FROM users WHERE id = ?').get(userId);
+
+  return {
+    profile, projects, experience, certs, achievements,
+    userContext: buildUserContext(resume, profile, projects, experience, certs, achievements, user)
+  };
+}
+
+// POST /api/jobs/check-questions - AI check if clarifying question is needed
+router.post('/check-questions', authMiddleware, async (req, res) => {
+  try {
+    const { job_description, job_title = '' } = req.body;
+    const resume = getActiveResume(req.user.id);
+    const { userContext } = getUserFullContext(req.user.id, resume);
+
+    const taskDescription = `Analyze candidate eligibility and match for the job: ${job_title}. Description: ${job_description ? job_description.substring(0, 1000) : 'General analysis'}`;
+
+    const prompt = `You have this candidate's full profile:
+${userContext}
+
+Task: ${taskDescription}
+
+Review the profile carefully. Is there any critical information missing that you NEED to perform this task well, that is NOT already in the profile above?
+
+If YES: return ONE specific question.
+If NO: return null.
+
+Return ONLY valid JSON:
+{
+  "needs_clarification": true/false,
+  "question": "the question text or null",
+  "question_type": "text|number|select|multiselect",
+  "options": ["option1","option2"] or null
+}`;
+
+    const raw = await generateText(prompt);
+    let parsed = { needs_clarification: false, question: null, question_type: null, options: null };
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) parsed = JSON.parse(match[0]);
+    } catch (pe) {
+      logger.warn('Failed to parse check-questions response', { raw });
+    }
+
+    return res.json(parsed);
+  } catch (err) {
+    logger.error('jobs check-questions error', { error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/jobs/analyze - analyze up to 10 jobs against resume
 router.post('/analyze', authMiddleware, async (req, res) => {
   try {
-    const { jobs } = req.body; // [{ title, description, apply_url, company }]
+    const { jobs, user_answers } = req.body; // [{ title, description, apply_url, company }], optional user_answers: { question: answer }
 
     if (!jobs || !Array.isArray(jobs) || jobs.length === 0) {
       return res.status(400).json({ error: 'Provide an array of jobs to analyze.' });
@@ -46,6 +107,13 @@ router.post('/analyze', authMiddleware, async (req, res) => {
     const resume = getActiveResume(req.user.id);
     if (!resume || !resume.parsed_text) {
       return res.status(400).json({ error: 'No active parsed resume found. Please upload your resume first.' });
+    }
+
+    const { userContext: baseUserContext } = getUserFullContext(req.user.id, resume);
+    let userContext = baseUserContext;
+
+    if (user_answers && Object.keys(user_answers).length > 0) {
+      userContext += `\n\nADDITIONAL INFORMATION FROM USER:\n${Object.entries(user_answers).map(([q, a]) => `Q: ${q}\nA: ${a}`).join('\n')}`;
     }
 
     // Fix 2: Use learning-system recommended threshold (evolves with feedback)
@@ -81,8 +149,8 @@ router.post('/analyze', authMiddleware, async (req, res) => {
       }
 
       try {
-        // Run AI match
-        const matchResult = await matchJobToResume(resume.parsed_text, description, title);
+        // Run AI match with userContext
+        const matchResult = await matchJobToResume(userContext, description, title);
 
         // Save/update job in DB — store recommendation field
         const existingJob = db.prepare('SELECT id FROM jobs WHERE apply_url = ? AND user_id = ?').get(apply_url, req.user.id);

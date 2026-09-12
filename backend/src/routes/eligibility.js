@@ -19,7 +19,26 @@ const router  = express.Router();
 
 const authMiddleware   = require('../middleware/auth');
 const logger           = require('../utils/logger');
+const { getDb }        = require('../database/db');
 const { generateText } = require('../services/geminiService');
+const { buildUserContext } = require('../utils/buildUserContext');
+
+// Helper: fetch full user context
+function getUserFullContext(userId) {
+  const db = getDb();
+  const resume = db.prepare('SELECT * FROM resumes WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1').get(userId);
+  const profile = db.prepare('SELECT * FROM user_profiles WHERE user_id = ?').get(userId);
+  const projects = db.prepare('SELECT * FROM user_projects WHERE user_id = ? ORDER BY display_order').all(userId);
+  const experience = db.prepare('SELECT * FROM user_experience WHERE user_id = ? ORDER BY display_order').all(userId);
+  const certs = db.prepare('SELECT * FROM user_certifications WHERE user_id = ? ORDER BY display_order').all(userId);
+  const achievements = db.prepare('SELECT * FROM user_achievements WHERE user_id = ? ORDER BY display_order').all(userId);
+  const user = db.prepare('SELECT email, phone FROM users WHERE id = ?').get(userId);
+
+  return {
+    resume, profile, projects, experience, certs, achievements,
+    userContext: buildUserContext(resume, profile, projects, experience, certs, achievements, user)
+  };
+}
 
 // Simple in-memory session store (keyed by session_id).
 // Sessions expire after 30 minutes.
@@ -38,19 +57,69 @@ function pruneExpiredSessions() {
 // All routes require authentication
 router.use(authMiddleware);
 
+// ─── POST /check-questions ───────────────────────────────────────────────────
+router.post('/check-questions', async (req, res) => {
+  try {
+    const { job_description, job_title = 'the role' } = req.body;
+    const { userContext } = getUserFullContext(req.user.id);
+    const taskDescription = `Check candidate eligibility for: ${job_title}. Description: ${job_description ? job_description.substring(0, 1000) : 'General assessment'}`;
+
+    const prompt = `You have this candidate's full profile:
+${userContext}
+
+Task: ${taskDescription}
+
+Review the profile carefully. Is there any critical information missing that you NEED to perform this task well, that is NOT already in the profile above?
+
+If YES: return ONE specific question.
+If NO: return null.
+
+Return ONLY valid JSON:
+{
+  "needs_clarification": true/false,
+  "question": "the question text or null",
+  "question_type": "text|number|select|multiselect",
+  "options": ["option1","option2"] or null
+}`;
+
+    const raw = await generateText(prompt);
+    let parsed = { needs_clarification: false, question: null, question_type: null, options: null };
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) parsed = JSON.parse(match[0]);
+    } catch (pe) {
+      logger.warn('Failed to parse eligibility check-questions response', { raw });
+    }
+
+    return res.json(parsed);
+  } catch (err) {
+    logger.error('eligibility check-questions error', { error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── POST /start ───────────────────────────────────────────────────────────────
 router.post('/start', async (req, res) => {
   try {
     pruneExpiredSessions();
 
-    const { job_description, job_title = 'the role' } = req.body;
+    const { job_description, job_title = 'the role', user_answers } = req.body;
     if (!job_description || !job_description.trim()) {
       return res.status(400).json({ error: 'job_description is required.' });
     }
 
+    const { userContext: baseUserContext } = getUserFullContext(req.user.id);
+    let userContext = baseUserContext;
+    if (user_answers && Object.keys(user_answers).length > 0) {
+      userContext += `\n\nADDITIONAL INFORMATION FROM USER:\n${Object.entries(user_answers).map(([q, a]) => `Q: ${q}\nA: ${a}`).join('\n')}`;
+    }
+
     const prompt = `You are a strict eligibility assessment AI for job applications.
 
-Given the following job description, generate exactly 5 yes/no or short-answer questions that determine whether a candidate is realistically eligible for this role. Focus on hard requirements (visa/work authorization, years of experience, must-have certifications, specific technical skills, location/relocation).
+CANDIDATE FULL PROFILE:
+${userContext}
+
+Given the following job description, generate exactly 5 targeted yes/no or short-answer questions that determine whether this candidate is realistically eligible for this role. Focus on requirements not already confirmed by the candidate's profile, or hard requirements (visa/work authorization, years of experience, must-have certifications, specific technical skills, location/relocation).
 
 JOB TITLE: ${job_title}
 
@@ -134,11 +203,15 @@ router.post('/answer', async (req, res) => {
     }
 
     // All questions answered — ask Gemini for a verdict
+    const { userContext } = getUserFullContext(req.user.id);
     const qaText = session.questions
       .map((q, i) => `Q${i + 1}: ${q}\nA${i + 1}: ${session.answers[i]}`)
       .join('\n\n');
 
     const verdictPrompt = `You are an expert recruiter assessing candidate eligibility for a job.
+
+CANDIDATE FULL PROFILE:
+${userContext}
 
 JOB TITLE: ${session.jobTitle}
 
@@ -148,7 +221,7 @@ ${session.jobDescription}
 CANDIDATE Q&A:
 ${qaText}
 
-Based on the Q&A above, assess the candidate's eligibility. Return a JSON object with exactly these fields:
+Based on the candidate profile and Q&A above, assess the candidate's eligibility. Return a JSON object with exactly these fields:
 {
   "verdict": "Eligible" | "Likely Eligible" | "Borderline" | "Not Eligible",
   "score": <integer 0-100>,

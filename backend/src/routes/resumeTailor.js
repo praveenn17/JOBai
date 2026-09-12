@@ -22,6 +22,9 @@ const logger         = require('../utils/logger');
 const { generateText } = require('../services/geminiService');
 const { generateTailoredResumePDF }  = require('../services/pdfService');
 const { generateTailoredResumeDocx } = require('../services/resumeService');
+const { buildUserContext } = require('../utils/buildUserContext');
+const { getResumeRules } = require('../utils/resumeRules');
+const { getFormatPreservationRules } = require('../utils/formatRules');
 
 const UPLOADS_DIR  = process.env.UPLOADS_PATH || path.join(__dirname, '../../uploads');
 const TAILORED_DIR = path.join(UPLOADS_DIR, 'tailored');
@@ -29,10 +32,73 @@ const TAILORED_DIR = path.join(UPLOADS_DIR, 'tailored');
 // All routes require authentication
 router.use(authMiddleware);
 
+// Helper: fetch full user context
+function getUserFullContext(userId, resume) {
+  const db = getDb();
+  const profile = db.prepare('SELECT * FROM user_profiles WHERE user_id = ?').get(userId);
+  const projects = db.prepare('SELECT * FROM user_projects WHERE user_id = ? ORDER BY display_order').all(userId);
+  const experience = db.prepare('SELECT * FROM user_experience WHERE user_id = ? ORDER BY display_order').all(userId);
+  const certs = db.prepare('SELECT * FROM user_certifications WHERE user_id = ? ORDER BY display_order').all(userId);
+  const achievements = db.prepare('SELECT * FROM user_achievements WHERE user_id = ? ORDER BY display_order').all(userId);
+  const user = db.prepare('SELECT email, phone FROM users WHERE id = ?').get(userId);
+
+  return {
+    profile, projects, experience, certs, achievements,
+    userContext: buildUserContext(resume, profile, projects, experience, certs, achievements, user)
+  };
+}
+
+// ─── POST /check-questions ──────────────────────────────────────────────────
+router.post('/check-questions', async (req, res) => {
+  try {
+    const { job_description, job_title = '' } = req.body;
+    const db = getDb();
+
+    const resume = db.prepare(
+      'SELECT * FROM resumes WHERE user_id = ? AND is_active = 1 LIMIT 1'
+    ).get(req.user.id);
+
+    const { userContext } = getUserFullContext(req.user.id, resume);
+    const taskDescription = `Tailor resume to match target role: ${job_title}. Description: ${job_description ? job_description.substring(0, 1000) : 'General tailoring'}`;
+
+    const prompt = `You have this candidate's full profile:
+${userContext}
+
+Task: ${taskDescription}
+
+Review the profile carefully. Is there any critical information missing that you NEED to perform this task well, that is NOT already in the profile above?
+
+If YES: return ONE specific question.
+If NO: return null.
+
+Return ONLY valid JSON:
+{
+  "needs_clarification": true/false,
+  "question": "the question text or null",
+  "question_type": "text|number|select|multiselect",
+  "options": ["option1","option2"] or null
+}`;
+
+    const raw = await generateText(prompt);
+    let parsed = { needs_clarification: false, question: null, question_type: null, options: null };
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) parsed = JSON.parse(match[0]);
+    } catch (pe) {
+      logger.warn('Failed to parse resumeTailor check-questions response', { raw });
+    }
+
+    return res.json(parsed);
+  } catch (err) {
+    logger.error('resumeTailor check-questions error', { error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── POST /tailor ──────────────────────────────────────────────────────────────
 router.post('/tailor', async (req, res) => {
   try {
-    const { job_description, job_title = '' } = req.body;
+    const { job_description, job_title = '', user_answers } = req.body;
     if (!job_description || !job_description.trim()) {
       return res.status(400).json({ error: 'job_description is required.' });
     }
@@ -50,17 +116,32 @@ router.post('/tailor', async (req, res) => {
       });
     }
 
+    const { profile, userContext: baseUserContext } = getUserFullContext(req.user.id, resume);
+    let userContext = baseUserContext;
+
+    if (user_answers && Object.keys(user_answers).length > 0) {
+      userContext += `\n\nADDITIONAL INFORMATION FROM USER:\n${Object.entries(user_answers).map(([q, a]) => `Q: ${q}\nA: ${a}`).join('\n')}`;
+    }
+
+    const rules = getResumeRules(profile);
+    const formatRules = getFormatPreservationRules(resume.parsed_text);
+
     const prompt = `You are an expert resume writer and ATS optimization specialist.
 
 Your task is to tailor the following resume to best match the provided job description.
 
-RESUME:
-${resume.parsed_text}
+CANDIDATE PROFILE:
+${userContext}
 
 JOB TITLE: ${job_title}
 
 JOB DESCRIPTION:
 ${job_description}
+
+INTELLIGENT CONTENT RULES — FOLLOW STRICTLY:
+${rules}
+
+${formatRules}
 
 INSTRUCTIONS:
 1. Rewrite the resume to highlight experience and skills that are most relevant to this specific job.

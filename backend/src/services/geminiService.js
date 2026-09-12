@@ -30,4 +30,4 @@ async function generateText(prompt, modelName = 'gemini-1.5-flash') {
   return response.text();
 }
 
-module.exports = { getModel, generateText };
+module.exports = { getModel, generateText, generateContent: generateText };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, FileText, Crosshair, SendHorizonal, Mail, Compass, LogOut, Menu, X, Zap, Settings, Brain, WifiOff, Shield, BarChart2, Scissors, CheckCircle } from "lucide-react";
+import { LayoutDashboard, FileText, Crosshair, SendHorizonal, Mail, Compass, LogOut, Menu, X, Zap, Settings, Brain, WifiOff, Shield, BarChart2, Scissors, CheckCircle, FileOutput, ScanSearch } from "lucide-react";
 import { useLocation, useNavigate, NavLink, Outlet } from 'react-router-dom';
 import useAuthStore from '../store/authStore';
 import { useToast } from './Toast';
@@ -10,6 +10,9 @@ import NotificationBell from './NotificationBell';
 const NAV = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', exact: true },
   { to: '/resume', icon: FileText, label: 'My Resume' },
+  { to: '/resume-builder', icon: FileOutput, label: 'Resume Builder' },
+  { to: '/resume-analyzer', icon: ScanSearch, label: 'Resume Analyzer' },
+  { to: '/resume-tailor', icon: Scissors, label: 'Resume Tailor' },
   { to: '/match', icon: Crosshair, label: 'Job Matcher' },
   { to: '/applications', icon: SendHorizonal, label: 'Applications' },
   { to: '/email', icon: Mail, label: 'Email Apply' },
@@ -17,7 +20,6 @@ const NAV = [
   { to: '/feedback', icon: Brain, label: 'Feedback & AI' },
   { to: '/email-analytics', icon: BarChart2, label: 'Email AI' },
   { to: '/limits', icon: Shield, label: 'Rate Limits' },
-  { to: '/resume-tailor', icon: Scissors, label: 'Resume Tailor' },
   { to: '/eligibility', icon: CheckCircle, label: 'Eligibility' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];

@@ -13,15 +13,86 @@ const logger = require('../utils/logger');
 
 const router = express.Router();
 
+const { generateText } = require('../services/geminiService');
+const { buildUserContext } = require('../utils/buildUserContext');
+
 function getActiveResume(userId) {
   const db = getDb();
   return db.prepare('SELECT * FROM resumes WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1').get(userId);
 }
 
+function getUserFullContext(userId, resume) {
+  const db = getDb();
+  const profile = db.prepare('SELECT * FROM user_profiles WHERE user_id = ?').get(userId);
+  const projects = db.prepare('SELECT * FROM user_projects WHERE user_id = ? ORDER BY display_order').all(userId);
+  const experience = db.prepare('SELECT * FROM user_experience WHERE user_id = ? ORDER BY display_order').all(userId);
+  const certs = db.prepare('SELECT * FROM user_certifications WHERE user_id = ? ORDER BY display_order').all(userId);
+  const achievements = db.prepare('SELECT * FROM user_achievements WHERE user_id = ? ORDER BY display_order').all(userId);
+  const user = db.prepare('SELECT email, phone FROM users WHERE id = ?').get(userId);
+
+  return {
+    profile, projects, experience, certs, achievements,
+    userContext: buildUserContext(resume, profile, projects, experience, certs, achievements, user)
+  };
+}
+
+// POST /api/applications/check-questions - AI check if clarifying questions are needed before applying
+router.post('/check-questions', authMiddleware, async (req, res) => {
+  try {
+    const { job_id, job_description, job_title = '' } = req.body;
+    const db = getDb();
+    let desc = job_description;
+    let title = job_title;
+    if (job_id && (!desc || !title)) {
+      const job = db.prepare('SELECT * FROM jobs WHERE id = ? AND user_id = ?').get(job_id, req.user.id);
+      if (job) {
+        desc = desc || job.description;
+        title = title || job.title;
+      }
+    }
+
+    const resume = getActiveResume(req.user.id);
+    const { userContext } = getUserFullContext(req.user.id, resume);
+    const taskDescription = `Tailor resume and prepare job application for: ${title}. Description: ${desc ? desc.substring(0, 1000) : 'Application preparation'}`;
+
+    const prompt = `You have this candidate's full profile:
+${userContext}
+
+Task: ${taskDescription}
+
+Review the profile carefully. Is there any critical information missing that you NEED to perform this task well, that is NOT already in the profile above?
+
+If YES: return ONE specific question.
+If NO: return null.
+
+Return ONLY valid JSON:
+{
+  "needs_clarification": true/false,
+  "question": "the question text or null",
+  "question_type": "text|number|select|multiselect",
+  "options": ["option1","option2"] or null
+}`;
+
+    const raw = await generateText(prompt);
+    let parsed = { needs_clarification: false, question: null, question_type: null, options: null };
+    try {
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) parsed = JSON.parse(match[0]);
+    } catch (pe) {
+      logger.warn('Failed to parse applications check-questions response', { raw });
+    }
+
+    return res.json(parsed);
+  } catch (err) {
+    logger.error('applications check-questions error', { error: err.message });
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/applications/start - start application process for a job
 router.post('/start', authMiddleware, async (req, res) => {
   try {
-    const { job_id, user_confirmed } = req.body;
+    const { job_id, user_confirmed, user_answers } = req.body;
     const db = getDb();
 
     const job = db.prepare('SELECT * FROM jobs WHERE id = ? AND user_id = ?').get(job_id, req.user.id);
@@ -75,9 +146,16 @@ router.post('/start', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'No active resume found. Upload your resume first.' });
     }
 
+    const { userContext: baseUserContext } = getUserFullContext(req.user.id, resume);
+    let userContext = baseUserContext;
+
+    if (user_answers && Object.keys(user_answers).length > 0) {
+      userContext += `\n\nADDITIONAL INFORMATION FROM USER:\n${Object.entries(user_answers).map(([q, a]) => `Q: ${q}\nA: ${a}`).join('\n')}`;
+    }
+
     // Step 1: Tailor resume (MANDATORY — no exceptions)
     logger.info('Starting resume tailoring', { job_id, userId: req.user.id });
-    const tailoredText = await tailorResume(resume.parsed_text, job.description, job.title);
+    const tailoredText = await tailorResume(userContext, job.description, job.title);
 
     // Step 2: Generate BOTH DOCX and PDF (Smart File Handling)
     const baseName = `app_${job.id.slice(0, 8)}`;

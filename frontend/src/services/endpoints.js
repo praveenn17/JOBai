@@ -141,6 +141,21 @@ export const ENDPOINTS = {
     achievements:       '/profile/achievements',         // GET | POST
     achievementById:    '/profile/achievements/:id',     // PUT | DELETE
   },
+
+  // ── Resume Builder ────────────────────────────────────────────────────────────
+  resumeBuilder: {
+    checkQuestions: '/resume-builder/check-questions',
+    build:          '/resume-builder/build',
+    download:       '/resume-builder/download/:filename',
+  },
+
+  // ── Resume Analyzer ───────────────────────────────────────────────────────────
+  resumeAnalyzer: {
+    getQuestions:  '/resume-analyzer/get-questions',
+    analyze:       '/resume-analyzer/analyze',
+    applyChanges:  '/resume-analyzer/apply-changes',
+    download:      '/resume-analyzer/download/:filename',
+  },
 };
 
 
