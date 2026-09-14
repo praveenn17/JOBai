@@ -19,7 +19,6 @@ const { generateTailoredResumePDF } = require('../services/pdfService');
 const { generateTailoredResumeDocx } = require('../services/resumeService');
 const { buildUserContext } = require('../utils/buildUserContext');
 const { getResumeRules } = require('../utils/resumeRules');
-const { getFormatPreservationRules } = require('../utils/formatRules');
 
 const UPLOADS_DIR = process.env.UPLOADS_PATH || path.join(__dirname, '../../uploads');
 const TAILORED_DIR = path.join(UPLOADS_DIR, 'tailored');
@@ -103,19 +102,16 @@ Maximum 3 questions. Return empty array if nothing needed.`;
 // ─── POST /build ─────────────────────────────────────────────────────────────
 router.post('/build', async (req, res) => {
   try {
-    const { target_role, target_domain, answers = {}, template_style = 'classic' } = req.body;
-    const db = getDb();
+    const { target_role = 'Software Engineer', target_domain = 'Technology', answers = {}, template_style = 'classic' } = req.body;
 
-    const resume = db.prepare(
-      'SELECT * FROM resumes WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1'
-    ).get(req.user.id);
-
-    const { profile, userContext } = getUserFullContext(req.user.id, resume);
+    const { profile, userContext } = getUserFullContext(req.user.id);
     const resumeRules = getResumeRules(profile);
-    const formatRules = getFormatPreservationRules(resume?.parsed_text);
 
-    const prompt = `You are building a professional resume for a job candidate. This must be a REAL resume with REAL information only.
+    const prompt = `You are building a one-page professional
+resume for a job candidate using ONLY real information
+from their profile. Follow the template and rules exactly.
 
+CANDIDATE FULL PROFILE:
 ${userContext}
 
 ADDITIONAL ANSWERS FROM USER:
@@ -126,30 +122,87 @@ TARGET DOMAIN: ${target_domain || 'Technology'}
 
 ${resumeRules}
 
-${formatRules}
+FIXED TEMPLATE — FOLLOW THIS EXACTLY FOR ALL USERS:
 
-TEMPLATE: Classic single-column professional resume.
+LAYOUT RULES:
+- Single column only. No tables. No text boxes.
+- Bullet character: ▸ (use this exact character)
+- Section headings: ALL CAPS
+- Skill separators: • (bullet dot)
+- Contact line separator: |
+- ONE PAGE STRICT — non-negotiable
 
-SECTION ORDER (follow exactly):
-1. HEADER (Name, Email, Phone, Location, LinkedIn, GitHub)
-2. PROFESSIONAL SUMMARY (3-4 lines, tailored to target role)
-3. TECHNICAL SKILLS (enhanced for domain — this section may include relevant skills for the role even if not explicitly listed by user)
-4. EDUCATION (follow CGPA/% inclusion rules above)
-5. WORK EXPERIENCE / INTERNSHIPS (if any)
-6. PROJECTS (most relevant to target role first)
-7. CERTIFICATIONS (if any)
-8. ACHIEVEMENTS (if any)
-9. SOFT SKILLS
+SECTION ORDER (include only sections with real data,
+skip empty sections entirely — no blank headings):
 
-STRICT RULES:
-- ONE PAGE ONLY — non-negotiable
-- No fake data, no placeholder text
-- Every fact must come from the profile above
-- Skills section may be enhanced for the target role
-- Format: plain text, ready for PDF conversion
+[CANDIDATE FULL NAME]
+[email] | [phone] | [LinkedIn URL] | [GitHub URL] | [Portfolio URL]
+(only include contact items that exist in profile)
 
-Return ONLY the resume text. No JSON, no explanation.
-Start directly with the candidate's name.`;
+CAREER OBJECTIVE
+3-4 lines tailored to ${target_role}. Mention graduation
+year/batch if student. Highlight top 2-3 skills. Show
+what value candidate brings. Never use clichés like
+"passionate" or "hardworking".
+
+EDUCATION
+[Degree] – [Branch]  [Batch/Graduation Year] ([Semester] if current)
+[University Name], [City]
+(Apply CGPA/% rules — only show if strong per rules above)
+
+INTERNSHIP EXPERIENCE
+(skip entirely if no internships or work experience)
+[Role] | [Company], [Location]  [Start] – [End]
+▸ [achievement with metric if possible]
+▸ [technical implementation detail]
+
+KEY PROJECTS
+(skip if no projects, include top 2-3 relevant to role)
+[Project Name] | [Live Demo if exists] | [GitHub if exists] | [Tech1, Tech2, Tech3]
+▸ [what was built + impact]
+▸ [technical details]
+
+TECHNICAL SKILLS
+(group by category, only categories with content)
+Languages: [skill1] • [skill2] • [skill3]
+[Category]: [skill1] • [skill2]
+(May enhance with relevant skills for ${target_role})
+
+SOFT SKILLS
+▸ [Skill1] • [Skill2] • [Skill3] • [Skill4] • [Skill5]
+
+ACHIEVEMENTS & ACTIVITIES
+(skip if none)
+▸ [achievement or activity]
+▸ [achievement or activity]
+
+CERTIFICATIONS
+(skip if none)
+▸ [Cert Name] — [Issuing Org] ([ID if available])
+
+LANGUAGES
+(skip if not in profile)
+▸ [Language] ([Proficiency]) • [Language] ([Proficiency])
+
+ABSOLUTE RULES:
+1. ONE PAGE — if content overflows, shorten bullets to
+   1 line each, abbreviate descriptions, cut least
+   relevant content. Never go to page 2.
+2. NO fake data — every fact from profile only.
+   Exception: TECHNICAL SKILLS and SOFT SKILLS may be
+   enhanced for the target role.
+3. NO placeholder text like [Add here] or [Your Name].
+   Start directly with the actual candidate name.
+4. NO section heading if that section has no content.
+5. Use ▸ for ALL bullet points.
+6. Use • to separate skills and languages.
+7. Use | to separate contact details.
+8. Career Objective must specifically mention
+   "${target_role}" role.
+
+Return ONLY the resume text.
+Start with the candidate's full name on the first line.
+No JSON. No explanation. No preamble.`;
 
     logger.info('Resume Builder: generating resume via Gemini', { userId: req.user.id });
     const resumeText = await generateText(prompt);
