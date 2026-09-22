@@ -107,15 +107,17 @@ const useAuthStore = create((set, get) => ({
       const res = await api.post(ENDPOINTS.auth.signupStep2, { email, otp });
       const { token, user, profile_complete, completion_percentage } = res.data;
       localStorage.setItem('jobai_token', token);
+      // Bug 1C fix: use strict boolean so integer 1 is handled correctly
+      const isComplete = profile_complete === true || profile_complete === 1;
       set({
         user, token,
-        profileComplete:      profile_complete || false,
+        profileComplete:      isComplete,
         completionPercentage: completion_percentage || 0,
         isNewUser:            true,
         authStep:             'done',
         loading:              false,
       });
-      return { success: true, isNewUser: true, profileComplete: profile_complete };
+      return { success: true, isNewUser: true, profileComplete: isComplete };
     } catch (err) {
       const msg = err.message || 'OTP verification failed.';
       set({ error: msg, loading: false });
@@ -144,15 +146,18 @@ const useAuthStore = create((set, get) => ({
       const res = await api.post(ENDPOINTS.auth.signinStep2, { email, otp });
       const { token, user, profile_complete, completion_percentage } = res.data;
       localStorage.setItem('jobai_token', token);
+      // Bug 1C fix: use strict boolean — profile_complete may be true or 1
+      const isComplete = profile_complete === true || profile_complete === 1;
       set({
-        user, token,
-        profileComplete:      profile_complete || false,
+        user,
+        token,
+        profileComplete:      isComplete,
         completionPercentage: completion_percentage || 0,
         isNewUser:            false,
         authStep:             'done',
         loading:              false,
       });
-      return { success: true, profileComplete: profile_complete, completionPercentage: completion_percentage };
+      return { success: true, profileComplete: isComplete, completionPercentage: completion_percentage };
     } catch (err) {
       const msg = err.message || 'OTP verification failed.';
       set({ error: msg, loading: false });

@@ -565,14 +565,18 @@ router.post('/signin-step2', async (req, res) => {
       return res.status(404).json({ error: 'User not found.' });
     }
 
-    // Ensure profile row exists (safety net for legacy users)
-    let profile = db.prepare('SELECT * FROM user_profiles WHERE user_id = ?').get(user.id);
+    // Bug 1B fix: Fetch profile explicitly to get is_complete and completion_percentage
+    let profile = db.prepare(
+      'SELECT is_complete, completion_percentage FROM user_profiles WHERE user_id = ?'
+    ).get(user.id);
     if (!profile) {
       db.prepare('INSERT OR IGNORE INTO user_profiles (id, user_id) VALUES (?, ?)').run(uuidv4(), user.id);
-      profile = db.prepare('SELECT * FROM user_profiles WHERE user_id = ?').get(user.id);
+      profile = db.prepare(
+        'SELECT is_complete, completion_percentage FROM user_profiles WHERE user_id = ?'
+      ).get(user.id);
     }
 
-    const profileComplete = profile ? (profile.is_complete === 1) : false;
+    const profileComplete = profile ? profile.is_complete === 1 : false;
     const completionPct = profile ? (profile.completion_percentage || 0) : 0;
 
     // Mark email_verified = 1 if not already (since they passed OTP)
@@ -589,7 +593,7 @@ router.post('/signin-step2', async (req, res) => {
     logger.info('User signed in via 2FA', { userId: user.id });
     res.json({
       token,
-      user: { ...user, email_verified: 1 },
+      user: { id: user.id, name: user.name, email: user.email, phone: user.phone, email_verified: 1 },
       is_new_user: false,
       profile_complete: profileComplete,
       completion_percentage: completionPct,

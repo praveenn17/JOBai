@@ -5,7 +5,7 @@
  * Progress is tracked by completion_percentage from the backend.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { ENDPOINTS, buildUrl } from '../services/endpoints';
@@ -25,7 +25,7 @@ let toastTimer;
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
 /** Tag input: type + Enter to add, click × to remove */
-function TagInput({ label, value = [], onChange, placeholder, hint }) {
+function TagInput({ label, value = [], onChange, placeholder, hint, onPendingChange }) {
   const [input, setInput] = useState('');
   const addTag = (e) => {
     if ((e.key === 'Enter' || e.key === ',') && input.trim()) {
@@ -33,6 +33,7 @@ function TagInput({ label, value = [], onChange, placeholder, hint }) {
       const t = input.trim().replace(/,+$/, '');
       if (t && !value.includes(t)) onChange([...value, t]);
       setInput('');
+      if (onPendingChange) onPendingChange('');
     }
   };
   return (
@@ -49,8 +50,12 @@ function TagInput({ label, value = [], onChange, placeholder, hint }) {
           </span>
         ))}
         <input
+          className="tag-input-field"
           value={input}
-          onChange={e => setInput(e.target.value)}
+          onChange={e => {
+            setInput(e.target.value);
+            if (onPendingChange) onPendingChange(e.target.value);
+          }}
           onKeyDown={addTag}
           placeholder={value.length === 0 ? (placeholder || 'Type and press Enter') : ''}
           style={{ flex: 1, minWidth: '120px', background: 'none', border: 'none', outline: 'none', color: '#f1f5f9', fontSize: '14px', padding: '0' }}
@@ -76,7 +81,21 @@ const inp = {
   fontFamily: 'inherit', transition: 'border-color 0.2s', boxSizing: 'border-box',
 };
 
-const sel = { ...inp };
+const sel = {
+  width: '100%',
+  padding: '12px 14px',
+  borderRadius: '10px',
+  background: '#1e293b',
+  border: '1.5px solid #334155',
+  color: '#e2e8f0',
+  fontSize: '14px',
+  outline: 'none',
+  fontFamily: 'inherit',
+  transition: 'border-color 0.2s',
+  boxSizing: 'border-box',
+  cursor: 'pointer',
+  appearance: 'auto',
+};
 
 const row2 = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' };
 const row3 = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '16px' };
@@ -185,10 +204,68 @@ export default function ProfileSetup() {
     willing_to_travel: '', work_authorization: '', how_heard: '',
   });
 
+  // Bug 3 fix: track text currently typed in each TagInput (not yet Enter'd)
+  const pendingSkillRefs = useRef({
+    technical_skills: '',
+    programming_languages: '',
+    frameworks: '',
+    databases: '',
+    cloud_skills: '',
+    dev_tools: '',
+    soft_skills: '',
+    preferred_roles: '',
+    preferred_industries: '',
+    preferred_locations: '',
+  });
+
+  /** Flush all pending typed-but-not-entered skill text into state before saving. */
+  const flushPendingSkills = () => {
+    const pending = pendingSkillRefs.current;
+    setSkills(s => ({
+      ...s,
+      technical_skills:      pending.technical_skills.trim()      && !s.technical_skills.includes(pending.technical_skills.trim())      ? [...s.technical_skills, pending.technical_skills.trim()]           : s.technical_skills,
+      programming_languages: pending.programming_languages.trim() && !s.programming_languages.includes(pending.programming_languages.trim()) ? [...s.programming_languages, pending.programming_languages.trim()]  : s.programming_languages,
+      frameworks:            pending.frameworks.trim()            && !s.frameworks.includes(pending.frameworks.trim())                   ? [...s.frameworks, pending.frameworks.trim()]                        : s.frameworks,
+      databases:             pending.databases.trim()             && !s.databases.includes(pending.databases.trim())                    ? [...s.databases, pending.databases.trim()]                         : s.databases,
+      cloud_skills:          pending.cloud_skills.trim()          && !s.cloud_skills.includes(pending.cloud_skills.trim())              ? [...s.cloud_skills, pending.cloud_skills.trim()]                   : s.cloud_skills,
+      dev_tools:             pending.dev_tools.trim()             && !s.dev_tools.includes(pending.dev_tools.trim())                    ? [...s.dev_tools, pending.dev_tools.trim()]                         : s.dev_tools,
+      soft_skills:           pending.soft_skills.trim()           && !s.soft_skills.includes(pending.soft_skills.trim())               ? [...s.soft_skills, pending.soft_skills.trim()]                     : s.soft_skills,
+    }));
+    setPrefs(p => ({
+      ...p,
+      preferred_roles:      pending.preferred_roles.trim()      && !p.preferred_roles.includes(pending.preferred_roles.trim())           ? [...p.preferred_roles, pending.preferred_roles.trim()]             : p.preferred_roles,
+      preferred_industries: pending.preferred_industries.trim() && !p.preferred_industries.includes(pending.preferred_industries.trim()) ? [...p.preferred_industries, pending.preferred_industries.trim()]   : p.preferred_industries,
+      preferred_locations:  pending.preferred_locations.trim()  && !p.preferred_locations.includes(pending.preferred_locations.trim())  ? [...p.preferred_locations, pending.preferred_locations.trim()]     : p.preferred_locations,
+    }));
+    // Reset all pending
+    Object.keys(pending).forEach(k => { pending[k] = ''; });
+  };
+
   const showToast = useCallback((msg, type = 'success') => {
     clearTimeout(toastTimer);
     setToast({ show: true, msg, type });
     toastTimer = setTimeout(() => setToast(t => ({ ...t, show: false })), TOAST_DURATION);
+  }, []);
+
+  // Bug 2 fix: Inject global style so native <select> option lists are readable
+  // on dark backgrounds (white-on-white / invisible dropdown options).
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.id = 'ps-select-options-fix';
+    style.innerHTML = `
+      select option {
+        background: #1e293b !important;
+        color: #e2e8f0 !important;
+      }
+      select:focus {
+        border-color: #6366f1 !important;
+      }
+    `;
+    document.head.appendChild(style);
+    return () => {
+      const el = document.getElementById('ps-select-options-fix');
+      if (el) document.head.removeChild(el);
+    };
   }, []);
 
   // ── Fetch profile on mount ───────────────────────────────────────────────
@@ -334,6 +411,11 @@ export default function ProfileSetup() {
         });
         break;
       case 9: case 10:
+        // Bug 3 fix: auto-add any text currently typed in a TagInput before saving
+        flushPendingSkills();
+        // Use a small tick so the state flush from flushPendingSkills takes effect
+        // before we read skills in saveSection (React batches state updates).
+        // We re-read from pendingSkillRefs directly for the save payload.
         ok = await saveSection(ENDPOINTS.profile.skills, {
           technical_skills: skills.technical_skills, programming_languages: skills.programming_languages,
           frameworks: skills.frameworks, databases: skills.databases, cloud_skills: skills.cloud_skills,
@@ -352,6 +434,8 @@ export default function ProfileSetup() {
         showToast('Progress saved!');
         break;
       case 18: case 19:
+        // Bug 3 fix: flush any pending typed-but-not-entered preferences before saving
+        flushPendingSkills();
         ok = await saveSection(ENDPOINTS.profile.preferences, {
           preferred_roles: prefs.preferred_roles, preferred_industries: prefs.preferred_industries,
           preferred_employment_type: prefs.preferred_employment_type, preferred_work_mode: prefs.preferred_work_mode,
@@ -461,6 +545,9 @@ export default function ProfileSetup() {
     .ps-input { width:100%; padding:12px 14px; border-radius:10px; background:rgba(255,255,255,0.05); border:1.5px solid rgba(255,255,255,0.1); color:#f1f5f9; font-size:14px; outline:none; font-family:inherit; transition:border-color 0.2s; }
     .ps-input:focus { border-color:#6366f1; }
     .ps-input::placeholder { color:#475569; }
+    select.ps-input { background:#1e293b; border-color:#334155; color:#e2e8f0; cursor:pointer; appearance:auto; }
+    select.ps-input:focus { border-color:#6366f1; }
+    select option { background:#1e293b !important; color:#e2e8f0 !important; }
     .ps-btn { padding:13px 28px; border-radius:10px; border:none; cursor:pointer; font-size:15px; font-weight:600; font-family:inherit; transition:all 0.2s; }
     .ps-btn-primary { background:linear-gradient(135deg,#6366f1,#8b5cf6); color:#fff; }
     .ps-btn-primary:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 6px 20px rgba(99,102,241,0.4); }
@@ -715,19 +802,19 @@ export default function ProfileSetup() {
       // ── Step 9: Technical Skills ───────────────────────────────────────────
       case 9: return (
         <div>
-          <TagInput label="Technical Skills * (min 3)" value={skills.technical_skills} onChange={v => setSkills(s => ({ ...s, technical_skills: v }))} placeholder="React, Node.js, Python…" hint="Type a skill and press Enter" />
-          <TagInput label="Programming Languages * (min 1)" value={skills.programming_languages} onChange={v => setSkills(s => ({ ...s, programming_languages: v }))} placeholder="JavaScript, Python, Java…" />
-          <TagInput label="Frameworks & Libraries" value={skills.frameworks} onChange={v => setSkills(s => ({ ...s, frameworks: v }))} placeholder="Express, Django, Spring…" />
-          <TagInput label="Databases" value={skills.databases} onChange={v => setSkills(s => ({ ...s, databases: v }))} placeholder="MySQL, MongoDB, PostgreSQL…" />
-          <TagInput label="Cloud Technologies" value={skills.cloud_skills} onChange={v => setSkills(s => ({ ...s, cloud_skills: v }))} placeholder="AWS, GCP, Azure, Firebase…" />
-          <TagInput label="Dev Tools & IDEs" value={skills.dev_tools} onChange={v => setSkills(s => ({ ...s, dev_tools: v }))} placeholder="Git, Docker, VS Code, Postman…" />
+          <TagInput label="Technical Skills * (min 3)" value={skills.technical_skills} onChange={v => setSkills(s => ({ ...s, technical_skills: v }))} placeholder="React, Node.js, Python…" hint="Type a skill and press Enter" onPendingChange={v => { pendingSkillRefs.current.technical_skills = v; }} />
+          <TagInput label="Programming Languages * (min 1)" value={skills.programming_languages} onChange={v => setSkills(s => ({ ...s, programming_languages: v }))} placeholder="JavaScript, Python, Java…" onPendingChange={v => { pendingSkillRefs.current.programming_languages = v; }} />
+          <TagInput label="Frameworks & Libraries" value={skills.frameworks} onChange={v => setSkills(s => ({ ...s, frameworks: v }))} placeholder="Express, Django, Spring…" onPendingChange={v => { pendingSkillRefs.current.frameworks = v; }} />
+          <TagInput label="Databases" value={skills.databases} onChange={v => setSkills(s => ({ ...s, databases: v }))} placeholder="MySQL, MongoDB, PostgreSQL…" onPendingChange={v => { pendingSkillRefs.current.databases = v; }} />
+          <TagInput label="Cloud Technologies" value={skills.cloud_skills} onChange={v => setSkills(s => ({ ...s, cloud_skills: v }))} placeholder="AWS, GCP, Azure, Firebase…" onPendingChange={v => { pendingSkillRefs.current.cloud_skills = v; }} />
+          <TagInput label="Dev Tools & IDEs" value={skills.dev_tools} onChange={v => setSkills(s => ({ ...s, dev_tools: v }))} placeholder="Git, Docker, VS Code, Postman…" onPendingChange={v => { pendingSkillRefs.current.dev_tools = v; }} />
         </div>
       );
 
       // ── Step 10: Soft Skills & Languages ──────────────────────────────────
       case 10: return (
         <div>
-          <TagInput label="Soft Skills" value={skills.soft_skills} onChange={v => setSkills(s => ({ ...s, soft_skills: v }))} placeholder="Leadership, Communication…" />
+          <TagInput label="Soft Skills" value={skills.soft_skills} onChange={v => setSkills(s => ({ ...s, soft_skills: v }))} placeholder="Leadership, Communication…" onPendingChange={v => { pendingSkillRefs.current.soft_skills = v; }} />
           <div style={{ marginBottom: '8px' }}><label style={lbl}>Languages Known</label></div>
           {(Array.isArray(skills.languages_known) && skills.languages_known.length > 0 && typeof skills.languages_known[0] === 'object'
             ? skills.languages_known
@@ -808,8 +895,8 @@ export default function ProfileSetup() {
       // ── Step 18: Job Preferences ───────────────────────────────────────────
       case 18: return (
         <div>
-          <TagInput label="Preferred Job Roles * (min 1)" value={prefs.preferred_roles} onChange={v => setPrefs(p => ({ ...p, preferred_roles: v }))} placeholder="Software Engineer, Data Analyst…" />
-          <TagInput label="Preferred Industries" value={prefs.preferred_industries} onChange={v => setPrefs(p => ({ ...p, preferred_industries: v }))} placeholder="IT, Finance, EdTech…" />
+          <TagInput label="Preferred Job Roles * (min 1)" value={prefs.preferred_roles} onChange={v => setPrefs(p => ({ ...p, preferred_roles: v }))} placeholder="Software Engineer, Data Analyst…" onPendingChange={v => { pendingSkillRefs.current.preferred_roles = v; }} />
+          <TagInput label="Preferred Industries" value={prefs.preferred_industries} onChange={v => setPrefs(p => ({ ...p, preferred_industries: v }))} placeholder="IT, Finance, EdTech…" onPendingChange={v => { pendingSkillRefs.current.preferred_industries = v; }} />
           <Field label="Employment Type *">
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {['Full-time','Part-time','Internship','Contract','Freelance'].map(t => (
@@ -830,7 +917,7 @@ export default function ProfileSetup() {
               ))}
             </div>
           </Field>
-          <TagInput label="Preferred Locations" value={prefs.preferred_locations} onChange={v => setPrefs(p => ({ ...p, preferred_locations: v }))} placeholder="Bengaluru, Mumbai, Remote…" />
+          <TagInput label="Preferred Locations" value={prefs.preferred_locations} onChange={v => setPrefs(p => ({ ...p, preferred_locations: v }))} placeholder="Bengaluru, Mumbai, Remote…" onPendingChange={v => { pendingSkillRefs.current.preferred_locations = v; }} />
           <div style={row2}>
             <Field label="Expected CTC / Salary (optional)"><input {...rField('expected_salary')} className="ps-input" placeholder="e.g. ₹5 LPA or Negotiable" /></Field>
             <Field label="Availability to Join">

@@ -99,18 +99,32 @@ async function sendOtp(email, purpose, details = null) {
   const expires = new Date(Date.now() + 10 * 60 * 1000).toISOString();
   const now     = new Date().toISOString();
 
+  // Bug 5 fix: If no details provided (resend path), carry over details from
+  // the most recent existing token so signup session data is never lost.
+  let detailsToStore = details ? JSON.stringify(details) : null;
+  if (!detailsToStore) {
+    const prevToken = db.prepare(`
+      SELECT details FROM otp_tokens
+      WHERE email = ? AND purpose = ? AND used = 0
+      ORDER BY created_at DESC LIMIT 1
+    `).get(email, purpose);
+    if (prevToken && prevToken.details) {
+      detailsToStore = prevToken.details;
+    }
+  }
+
   // Mark all previous unused OTPs for this email+purpose as used
   db.prepare(`
     UPDATE otp_tokens SET used = 1
     WHERE email = ? AND purpose = ? AND used = 0
   `).run(email, purpose);
 
-  // Insert new OTP record (store details JSON if provided)
+  // Insert new OTP record (store details JSON if provided, or carried-over details)
   db.prepare(`
     INSERT INTO otp_tokens
       (id, email, otp, purpose, expires_at, last_resend_at, details)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(id, email, hash, purpose, expires, now, details ? JSON.stringify(details) : null);
+  `).run(id, email, hash, purpose, expires, now, detailsToStore);
 
   // ── Send email ───────────────────────────────────────────────────────────
   if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
