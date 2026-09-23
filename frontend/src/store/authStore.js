@@ -23,32 +23,49 @@ const useAuthStore = create((set, get) => ({
   authStep:               'mode', // 'mode' | 'credentials' | 'otp' | 'done'
   authMode:               null,   // 'signup' | 'signin'
 
+  /** True once init() has fully resolved (user + profile fetched or no token). */
+  initialized:            false,
+
   // ─── Init ────────────────────────────────────────────────────────────────
 
-  /** Called once on app mount — validates stored token & loads user + profile. */
+  /**
+   * Called once on app mount — validates stored JWT, loads user + profile.
+   * Bug 1 fix: wait for BOTH /auth/me AND /api/profile before calling set()
+   * so PrivateRoute never sees token=set but profileComplete=false.
+   */
   init: async () => {
     const token = localStorage.getItem('jobai_token');
-    if (!token) return;
+    if (!token) {
+      set({ initialized: true });
+      return;
+    }
     try {
-      const res = await api.get(ENDPOINTS.auth.me);
-      set({ user: res.data.user, token });
+      // 1. Validate token + get user
+      const meRes = await api.get(ENDPOINTS.auth.me);
+      const user = meRes.data.user;
 
-      // Fetch profile completion status
+      // 2. Fetch profile to get is_complete and completion_percentage
+      let profileComplete = false;
+      let completionPercentage = 0;
       try {
         const profileRes = await api.get(ENDPOINTS.profile.get);
+        // Backend GET /api/profile returns { profile, projects, experience, certifications, achievements }
         const profile = profileRes.data?.profile;
         if (profile) {
-          set({
-            profileComplete:      profile.is_complete === 1,
-            completionPercentage: profile.completion_percentage || 0,
-          });
+          profileComplete      = profile.is_complete === 1;
+          completionPercentage = profile.completion_percentage || 0;
         }
       } catch (_) {
-        // Profile may not exist for very old accounts — non-fatal
+        // Profile may not exist for very old accounts — non-fatal.
+        // profileComplete stays false, user will be sent to /profile-setup.
       }
+
+      // 3. Single set() so React never sees an intermediate state where
+      //    token is set but profileComplete is still false.
+      set({ user, token, profileComplete, completionPercentage, initialized: true });
     } catch {
       localStorage.removeItem('jobai_token');
-      set({ user: null, token: null });
+      set({ user: null, token: null, initialized: true });
     }
   },
 
@@ -115,6 +132,7 @@ const useAuthStore = create((set, get) => ({
         completionPercentage: completion_percentage || 0,
         isNewUser:            true,
         authStep:             'done',
+        initialized:          true,  // bypass init() guard in PrivateRoute
         loading:              false,
       });
       return { success: true, isNewUser: true, profileComplete: isComplete };
@@ -125,12 +143,24 @@ const useAuthStore = create((set, get) => ({
     }
   },
 
-  /** Step 1 of sign-in: verify password → send OTP. Does NOT return JWT yet. */
+  /**
+   * Step 1 of sign-in: verify password → send OTP email.
+   * Bug 4 fix: must ONLY set authStep='otp'. Must NOT set token, user,
+   * or profileComplete. Uses a single set() call to avoid partial renders.
+   */
   signinStep1: async (email, password) => {
-    set({ loading: true, error: null });
     try {
+      set({ loading: true, error: null });
       await api.post(ENDPOINTS.auth.signinStep1, { email, password });
-      set({ pendingEmail: email, authStep: 'otp', authMode: 'signin', loading: false });
+      // Single set() — sets authStep to 'otp' so Auth.jsx renders OTP screen.
+      // Does NOT set token, user, or profileComplete.
+      set({
+        pendingEmail: email,
+        authStep:     'otp',
+        authMode:     'signin',
+        loading:      false,
+        error:        null,
+      });
       return { success: true };
     } catch (err) {
       const msg = err.message || 'Sign-in failed.';
@@ -155,6 +185,7 @@ const useAuthStore = create((set, get) => ({
         completionPercentage: completion_percentage || 0,
         isNewUser:            false,
         authStep:             'done',
+        initialized:          true,  // bypass init() guard in PrivateRoute
         loading:              false,
       });
       return { success: true, profileComplete: isComplete, completionPercentage: completion_percentage };

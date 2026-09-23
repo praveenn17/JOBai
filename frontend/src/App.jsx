@@ -34,20 +34,29 @@ const ResumeAnalyzer = lazy(() => import('./pages/ResumeAnalyzer'));
  * PrivateRoute — guards authenticated routes.
  *
  * Logic:
+ *   - init() not yet complete → show loader (prevents premature redirect while
+ *     profile is being fetched from backend)
  *   - Not authenticated → /auth
  *   - Authenticated + profile incomplete + not already on /profile-setup → /profile-setup
  *   - Otherwise → render children
  */
 function PrivateRoute({ children }) {
-  const { token, profileComplete, authStep } = useAuthStore();
+  // Bug 1 fix: read `initialized` so we never redirect before init() completes.
+  // `initialized` is set to true by init() after both /auth/me AND /api/profile
+  // have resolved, ensuring profileComplete reflects the real DB value.
+  const { token, profileComplete, initialized } = useAuthStore();
   const location = useLocation();
+
+  // init() hasn't finished fetching user + profile yet — hold render
+  if (!initialized) {
+    return <Loader fullScreen />;
+  }
 
   if (!token) {
     return <Navigate to="/auth" replace />;
   }
 
-  // If the auth flow is freshly complete (authStep === 'done') AND profile isn't done
-  // AND we're not already on /profile-setup → redirect to onboarding
+  // Profile incomplete and not already on the setup page → redirect to onboarding
   if (!profileComplete && location.pathname !== '/profile-setup') {
     return <Navigate to="/profile-setup" replace />;
   }
@@ -57,10 +66,9 @@ function PrivateRoute({ children }) {
 
 export default function App() {
   const { init, token, logout, authStep } = useAuthStore();
-  const [ready, setReady] = React.useState(false);
 
   useEffect(() => {
-    init().finally(() => setReady(true));
+    init();
   }, []);
 
   // Handle token expiry / 401 from any API call
@@ -69,8 +77,6 @@ export default function App() {
     window.addEventListener('jobai:unauthorized', handler);
     return () => window.removeEventListener('jobai:unauthorized', handler);
   }, [logout]);
-
-  if (!ready) return <Loader fullScreen />;
 
   return (
     <ErrorBoundary>
