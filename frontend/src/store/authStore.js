@@ -77,7 +77,20 @@ const useAuthStore = create((set, get) => ({
       const res = await api.post(ENDPOINTS.auth.login, { email, password });
       const { token, user } = res.data;
       localStorage.setItem('jobai_token', token);
-      set({ user, token, loading: false });
+
+      // Fetch profile so PrivateRoute knows whether to redirect to /profile-setup
+      let profileComplete = false;
+      let completionPercentage = 0;
+      try {
+        const profileRes = await api.get(ENDPOINTS.profile.get);
+        const profile = profileRes.data?.profile;
+        if (profile) {
+          profileComplete      = profile.is_complete === 1;
+          completionPercentage = profile.completion_percentage || 0;
+        }
+      } catch (_) { /* non-fatal */ }
+
+      set({ user, token, profileComplete, completionPercentage, initialized: true, loading: false });
       return { success: true };
     } catch (err) {
       const msg = err.message || 'Login failed.';
