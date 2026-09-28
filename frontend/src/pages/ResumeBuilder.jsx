@@ -134,13 +134,13 @@ export default function ResumeBuilder() {
   const downloadFile = async (url) => {
     if (!url) return;
     try {
-      // Use api client — uses correct 'jobai_token' key and Authorization header
-      const response = await api.get(url, { responseType: 'blob' });
-      const blob = new Blob([response.data], { type: response.headers['content-type'] });
+      const cleanUrl = typeof url === 'string' && url.startsWith('/api/') ? url.replace(/^\/api/, '') : url;
+      const response = await api.get(cleanUrl, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: response.headers['content-type'] || 'application/octet-stream' });
       const blobUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
-      a.download = url.split('/').pop() || 'resume';
+      a.download = (typeof cleanUrl === 'string' ? cleanUrl.split('/').pop() : 'resume') || 'resume';
       document.body.appendChild(a);
       a.click();
       a.remove();

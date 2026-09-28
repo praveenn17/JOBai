@@ -159,13 +159,13 @@ export default function ResumeAnalyzer() {
   const downloadFile = async (url) => {
     if (!url) return;
     try {
-      // Use api client — correct token key ('jobai_token') and Authorization header
-      const response = await api.get(url, { responseType: 'blob' });
-      const blob = new Blob([response.data], { type: response.headers['content-type'] });
+      const cleanUrl = typeof url === 'string' && url.startsWith('/api/') ? url.replace(/^\/api/, '') : url;
+      const response = await api.get(cleanUrl, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: response.headers['content-type'] || 'application/octet-stream' });
       const blobUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = blobUrl;
-      a.download = url.split('/').pop() || 'improved_resume';
+      a.download = (typeof cleanUrl === 'string' ? cleanUrl.split('/').pop() : 'improved_resume') || 'improved_resume';
       document.body.appendChild(a);
       a.click();
       a.remove();

@@ -19,8 +19,11 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-// ── Request interceptor: attach JWT ──────────────────────────────────────────
+// ── Request interceptor: attach JWT & normalize duplicate /api prefix ──────────
 api.interceptors.request.use((config) => {
+  if (config.url && typeof config.url === 'string' && config.url.startsWith('/api/')) {
+    config.url = config.url.replace(/^\/api/, '');
+  }
   const token = localStorage.getItem('jobai_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
@@ -69,12 +72,15 @@ export function uploadFile(url, file, fieldName = 'resume', onProgress) {
  * @param {string} filename - e.g. 'applications.csv'
  */
 export async function downloadFile(url, filename) {
-  const res = await api.get(url, { responseType: 'blob' });
-  const href = URL.createObjectURL(new Blob([res.data]));
+  const cleanUrl = typeof url === 'string' && url.startsWith('/api/') ? url.replace(/^\/api/, '') : url;
+  const res = await api.get(cleanUrl, { responseType: 'blob' });
+  const href = URL.createObjectURL(new Blob([res.data], { type: res.headers['content-type'] || 'application/octet-stream' }));
   const a = document.createElement('a');
   a.href = href;
-  a.download = filename;
+  a.download = filename || (typeof cleanUrl === 'string' ? cleanUrl.split('/').pop() : 'download');
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(href);
 }
 
