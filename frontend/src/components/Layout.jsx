@@ -86,7 +86,7 @@ export default function Layout() {
   const handleLogout = () => {
     logout();
     toast.info('Logged out. See you soon!');
-    navigate('/login');
+    navigate('/auth');   // Must go to /auth (2FA flow), NOT /login (legacy, no OTP)
   };
 
   return (
