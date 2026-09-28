@@ -18,8 +18,8 @@ export default defineConfig(({ mode }) => {
         '/api': {
           target: backendUrl,
           changeOrigin: true,
-          // Optionally uncomment to debug proxy requests:
-          // configure: (proxy) => { proxy.on('error', (err) => console.error('proxy err', err)); },
+          timeout: 120000,
+          proxyTimeout: 120000,
         },
       },
     },

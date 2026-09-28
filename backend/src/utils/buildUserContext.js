@@ -34,7 +34,7 @@ function buildUserContext(resume, profile, projects = [], experience = [], certs
 
   return `
 CANDIDATE RESUME (uploaded):
-${resume?.parsed_text ? resume.parsed_text : 'No resume uploaded'}
+${resume?.parsed_text ? resume.parsed_text.substring(0, 5000) : 'No resume uploaded'}
 
 PERSONAL & CONTACT DETAILS:
 Name: ${profile?.first_name || ''} ${profile?.last_name || ''}
