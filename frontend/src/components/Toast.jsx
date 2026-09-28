@@ -21,6 +21,10 @@ export function ToastProvider({ children }) {
     error: (msg, d) => add(msg, 'error', d || 6000),
     info: (msg, d) => add(msg, 'info', d),
     warning: (msg, d) => add(msg, 'warning', d),
+    addToast: (msg, type = 'info', d) => {
+      const fn = toast[type] || toast.info;
+      return fn(msg, d);
+    },
   };
 
   const colors = {

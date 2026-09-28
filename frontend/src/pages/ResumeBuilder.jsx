@@ -44,7 +44,7 @@ export default function ResumeBuilder() {
   const [result, setResult] = useState(null); // { resume_text, pdf_url, docx_url }
   const [showPreview, setShowPreview] = useState(false);
 
-  const { addToast } = useToast();
+  const toast = useToast();
   const navigate = useNavigate();
 
   // Rotate loading messages in step 2
@@ -62,7 +62,7 @@ export default function ResumeBuilder() {
   const handleCheckQuestions = async (e) => {
     e.preventDefault();
     if (!targetRole.trim()) {
-      addToast('Please enter your target role.', 'error');
+      toast.error('Please enter your target role.');
       return;
     }
 
@@ -88,7 +88,7 @@ export default function ResumeBuilder() {
         triggerBuild({});
       }
     } catch (err) {
-      addToast(err.response?.data?.error || 'Failed to initialize resume builder.', 'error');
+      toast.error(err.response?.data?.error || 'Failed to initialize resume builder.');
     } finally {
       setIsSubmitting(false);
     }
@@ -109,10 +109,10 @@ export default function ResumeBuilder() {
 
       setResult(res.data);
       setStep(3);
-      addToast('Resume generated successfully!', 'success');
+      toast.success('Resume generated successfully!');
     } catch (err) {
       setStep(questions.length > 0 ? 1.5 : 1);
-      addToast(err.response?.data?.error || 'Failed to build resume. Please try again.', 'error');
+      toast.error(err.response?.data?.error || 'Failed to build resume. Please try again.');
     }
   };
 

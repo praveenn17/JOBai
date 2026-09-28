@@ -31,8 +31,15 @@ if (!fs.existsSync(TAILORED_DIR)) {
 router.use(authMiddleware);
 
 // Helper: fetch full user context
-function getUserFullContext(userId, resume) {
+function getUserFullContext(userId, resumeParam) {
   const db = getDb();
+  let resume = resumeParam;
+  if (!resume) {
+    resume = db.prepare('SELECT * FROM resumes WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1').get(userId);
+    if (!resume) {
+      resume = db.prepare('SELECT * FROM resumes WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(userId);
+    }
+  }
   const profile = db.prepare('SELECT * FROM user_profiles WHERE user_id = ?').get(userId);
   const projects = db.prepare('SELECT * FROM user_projects WHERE user_id = ? ORDER BY display_order').all(userId);
   const experience = db.prepare('SELECT * FROM user_experience WHERE user_id = ? ORDER BY display_order').all(userId);
@@ -41,7 +48,7 @@ function getUserFullContext(userId, resume) {
   const user = db.prepare('SELECT email, phone FROM users WHERE id = ?').get(userId);
 
   return {
-    profile, projects, experience, certs, achievements,
+    resume, profile, projects, experience, certs, achievements,
     userContext: buildUserContext(resume, profile, projects, experience, certs, achievements, user)
   };
 }

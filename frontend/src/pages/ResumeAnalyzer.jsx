@@ -42,7 +42,7 @@ export default function ResumeAnalyzer() {
   const [expandedSection, setExpandedSection] = useState({ additions: true, subtractions: true, modifications: true });
   const [showPreview, setShowPreview] = useState(false);
 
-  const { addToast } = useToast();
+  const toast = useToast();
   const navigate = useNavigate();
 
   // Load existing resumes on mount
@@ -95,7 +95,7 @@ export default function ResumeAnalyzer() {
         triggerAnalysis({});
       }
     } catch (err) {
-      addToast(err.response?.data?.error || 'Failed to start analysis. Please ensure a resume is uploaded.', 'error');
+      toast.error(err.response?.data?.error || 'Failed to start analysis. Please ensure a resume is uploaded.');
     } finally {
       setIsSubmitting(false);
     }
@@ -112,10 +112,10 @@ export default function ResumeAnalyzer() {
 
       setAnalysis(res.data);
       setState(3);
-      addToast('Resume analysis completed!', 'success');
+      toast.success('Resume analysis completed!');
     } catch (err) {
       setState(questions.length > 0 ? 1.5 : 1);
-      addToast(err.response?.data?.error || 'Failed to analyze resume.', 'error');
+      toast.error(err.response?.data?.error || 'Failed to analyze resume.');
     }
   };
 
@@ -140,10 +140,10 @@ export default function ResumeAnalyzer() {
 
       setImprovedResult(res.data);
       setState(5);
-      addToast('Resume improvements applied successfully!', 'success');
+      toast.success('Resume improvements applied successfully!');
     } catch (err) {
       setState(3);
-      addToast(err.response?.data?.error || 'Failed to apply changes.', 'error');
+      toast.error(err.response?.data?.error || 'Failed to apply changes.');
     }
   };
 
