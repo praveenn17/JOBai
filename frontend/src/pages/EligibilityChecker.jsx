@@ -247,12 +247,17 @@ export default function EligibilityChecker() {
         job_description: jobDescription,
         job_title: jobTitle,
       });
-      setSessionId(data.session_id);
-      setCurrentQuestion(data.first_question);
-      setQuestionNumber(data.question_number);
-      setTotalQuestions(data.total_questions);
-      setCurrentAnswer('');
-      setUiState('questioning');
+      if (data.done) {
+        setVerdict(data);
+        setUiState('done');
+      } else {
+        setSessionId(data.session_id);
+        setCurrentQuestion(data.first_question);
+        setQuestionNumber(data.question_number);
+        setTotalQuestions(data.total_questions);
+        setCurrentAnswer('');
+        setUiState('questioning');
+      }
     } catch (err) {
       const msg = err.response?.data?.error || 'Failed to start check. Please try again.';
       toast.error(msg);
@@ -309,7 +314,7 @@ export default function EligibilityChecker() {
         <div style={S.badge}><Sparkles size={12} /> AI-Powered · Google Gemini</div>
         <h1 style={S.title}>Eligibility Checker</h1>
         <p style={S.subtitle}>
-          Answer 5 targeted questions about a job and get an instant AI eligibility verdict before applying.
+          Check your eligibility for any role against your active resume and profile. The AI only asks questions if critical requirements are missing.
         </p>
       </div>
 

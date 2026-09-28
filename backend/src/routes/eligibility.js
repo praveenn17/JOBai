@@ -26,7 +26,10 @@ const { buildUserContext } = require('../utils/buildUserContext');
 // Helper: fetch full user context
 function getUserFullContext(userId) {
   const db = getDb();
-  const resume = db.prepare('SELECT * FROM resumes WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1').get(userId);
+  let resume = db.prepare('SELECT * FROM resumes WHERE user_id = ? AND is_active = 1 ORDER BY created_at DESC LIMIT 1').get(userId);
+  if (!resume) {
+    resume = db.prepare('SELECT * FROM resumes WHERE user_id = ? ORDER BY created_at DESC LIMIT 1').get(userId);
+  }
   const profile = db.prepare('SELECT * FROM user_profiles WHERE user_id = ?').get(userId);
   const projects = db.prepare('SELECT * FROM user_projects WHERE user_id = ? ORDER BY display_order').all(userId);
   const experience = db.prepare('SELECT * FROM user_experience WHERE user_id = ? ORDER BY display_order').all(userId);
@@ -38,6 +41,38 @@ function getUserFullContext(userId) {
     resume, profile, projects, experience, certs, achievements,
     userContext: buildUserContext(resume, profile, projects, experience, certs, achievements, user)
   };
+}
+
+// Helper: evaluate verdict directly using Gemini
+async function generateEligibilityVerdict({ userContext, jobTitle, jobDescription, qaText = '' }) {
+  const verdictPrompt = `You are an expert recruiter assessing candidate eligibility for a job.
+
+CANDIDATE FULL PROFILE & UPLOADED RESUME:
+${userContext}
+
+JOB TITLE: ${jobTitle}
+
+JOB DESCRIPTION:
+${jobDescription}
+
+${qaText ? `CANDIDATE Q&A / ADDITIONAL CLARIFICATIONS:\n${qaText}\n` : ''}
+Based on the candidate's resume, profile, and any Q&A above, assess the candidate's eligibility. Return a JSON object with exactly these fields:
+{
+  "verdict": "Eligible" | "Likely Eligible" | "Borderline" | "Not Eligible",
+  "score": <integer 0-100>,
+  "breakdown": [
+    { "criterion": "<requirement name>", "met": true|false, "note": "<one line justification referencing candidate resume or profile facts>" }
+  ],
+  "recommendation": "<2-3 sentence actionable advice for the candidate>"
+}
+
+Return ONLY the JSON object. No markdown fences, no explanation.`;
+
+  logger.info('Eligibility Checker: generating verdict via Gemini');
+  const verdictRaw = await generateText(verdictPrompt);
+  const match = verdictRaw.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('No JSON object found in verdict response');
+  return JSON.parse(match[0]);
 }
 
 // Simple in-memory session store (keyed by session_id).
@@ -64,15 +99,17 @@ router.post('/check-questions', async (req, res) => {
     const { userContext } = getUserFullContext(req.user.id);
     const taskDescription = `Check candidate eligibility for: ${job_title}. Description: ${job_description ? job_description.substring(0, 1000) : 'General assessment'}`;
 
-    const prompt = `You have this candidate's full profile:
+    const prompt = `You have this candidate's full profile and uploaded resume:
 ${userContext}
 
 Task: ${taskDescription}
 
-Review the profile carefully. Is there any critical information missing that you NEED to perform this task well, that is NOT already in the profile above?
+Review the profile and resume carefully.
+CRITICAL RULE: DO NOT ask about any detail, skill, qualification, education degree, graduation year, CGPA, work experience, project, certification, or location that is ALREADY present or inferable from the profile or resume text above.
 
+Is there any vital, non-negotiable job requirement that is COMPLETELY MISSING from their profile/resume and needed for this check?
 If YES: return ONE specific question.
-If NO: return null.
+If NO (profile/resume has sufficient details): return null.
 
 Return ONLY valid JSON:
 {
@@ -114,37 +151,69 @@ router.post('/start', async (req, res) => {
       userContext += `\n\nADDITIONAL INFORMATION FROM USER:\n${Object.entries(user_answers).map(([q, a]) => `Q: ${q}\nA: ${a}`).join('\n')}`;
     }
 
-    const prompt = `You are a strict eligibility assessment AI for job applications.
+    const prompt = `You are a strict, highly selective eligibility assessment AI for job applications.
 
-CANDIDATE FULL PROFILE:
+CANDIDATE FULL PROFILE & RESUME:
 ${userContext}
-
-Given the following job description, generate exactly 5 targeted yes/no or short-answer questions that determine whether this candidate is realistically eligible for this role. Focus on requirements not already confirmed by the candidate's profile, or hard requirements (visa/work authorization, years of experience, must-have certifications, specific technical skills, location/relocation).
 
 JOB TITLE: ${job_title}
 
 JOB DESCRIPTION:
 ${job_description}
 
-Return ONLY a JSON array of exactly 5 question strings. No explanation, no markdown, no code blocks.
-Example format: ["Question 1?","Question 2?","Question 3?","Question 4?","Question 5?"]`;
+INSTRUCTIONS:
+1. Thoroughly analyze the candidate's uploaded resume text, personal details, education (UG/PG degree, CGPA, graduation year, backlogs), technical skills, programming languages, frameworks, databases, cloud skills, developer tools, projects, work experience, certifications, achievements, notice period, location, and relocation preferences listed above.
+2. STRICT RULE: DO NOT ASK ANY QUESTION regarding information that is ALREADY covered, mentioned, or inferable in their uploaded resume or profile setup.
+   - DO NOT ask about any skills, tools, or languages already listed (e.g., if JavaScript, React, Python, or SQL is in their resume or skills, DO NOT ask if they know it).
+   - DO NOT ask about their degree, college, graduation year, CGPA, or marks (these are already in their education profile).
+   - DO NOT ask about prior companies, experience, or projects that appear in their resume/profile.
+   - DO NOT ask about location, relocation, or notice period if already specified.
+   - NEVER ask generic interview questions (e.g. "Why do you want this job?", "Describe your strengths").
+3. ONLY ask a question if there is a STRICT, CRITICAL, NON-NEGOTIABLE job requirement from the Job Description that is COMPLETELY MISSING and cannot be determined from their resume or profile (e.g., specific mandatory government security clearance, required professional license like CPA/Bar admission, unstated work authorization/visa status for a foreign location, or willingness to work specific night shifts/travel requirements).
+4. If there are NO critical unaddressed requirements, or if the candidate's resume and profile already provide enough information to assess their eligibility, return an EMPTY JSON array: [].
+5. If there are genuinely missing critical requirements, return ONLY those specific questions (at most 1 to 3 questions).
 
-    logger.info('Eligibility Checker: generating questions via Gemini', { userId: req.user.id });
+Return ONLY a valid JSON array of question strings (e.g. ["Question 1?"] or []). No explanation, no markdown fences.`;
+
+    logger.info('Eligibility Checker: checking for required questions via Gemini', { userId: req.user.id });
     const raw = await generateText(prompt);
 
     // Extract JSON array from response
-    let questions;
+    let questions = [];
     try {
       const match = raw.match(/\[[\s\S]*\]/);
-      if (!match) throw new Error('No JSON array found');
-      questions = JSON.parse(match[0]);
-      if (!Array.isArray(questions) || questions.length === 0) throw new Error('Empty question array');
+      if (match) {
+        const parsed = JSON.parse(match[0]);
+        if (Array.isArray(parsed)) {
+          questions = parsed.filter(q => typeof q === 'string' && q.trim().length > 0).slice(0, 5);
+        }
+      }
     } catch (parseErr) {
-      logger.error('Eligibility: failed to parse questions', { raw, error: parseErr.message });
-      return res.status(500).json({ error: 'AI returned an unexpected response. Please try again.' });
+      logger.warn('Eligibility: failed to parse question array, defaulting to no extra questions', { raw, error: parseErr.message });
+      questions = [];
     }
 
-    // Store session
+    // If no questions are needed (everything is already covered in resume & profile),
+    // generate and return the verdict immediately!
+    if (questions.length === 0) {
+      logger.info('Eligibility Checker: all requirements covered by resume & profile, generating verdict directly', { userId: req.user.id });
+      const verdict = await generateEligibilityVerdict({
+        userContext,
+        jobTitle: job_title,
+        jobDescription: job_description,
+        qaText: 'All key criteria verified directly from uploaded resume and profile setup. No additional questions required.',
+      });
+
+      return res.json({
+        done:           true,
+        verdict:        verdict.verdict        || 'Eligible',
+        score:          verdict.score          ?? 0,
+        breakdown:      verdict.breakdown      || [],
+        recommendation: verdict.recommendation || '',
+      });
+    }
+
+    // Store session for questions that are genuinely needed
     const sessionId = `elig_${req.user.id}_${Date.now()}`;
     sessions.set(sessionId, {
       userId: req.user.id,
@@ -156,8 +225,9 @@ Example format: ["Question 1?","Question 2?","Question 3?","Question 4?","Questi
     });
 
     return res.json({
-      session_id:     sessionId,
-      first_question: questions[0],
+      done:            false,
+      session_id:      sessionId,
+      first_question:  questions[0],
       question_number: 1,
       total_questions: questions.length,
     });
@@ -196,6 +266,7 @@ router.post('/answer', async (req, res) => {
     // More questions remain
     if (nextIndex < session.questions.length) {
       return res.json({
+        done:            false,
         next_question:   session.questions[nextIndex],
         question_number: nextIndex + 1,
         total_questions: session.questions.length,
@@ -208,43 +279,13 @@ router.post('/answer', async (req, res) => {
       .map((q, i) => `Q${i + 1}: ${q}\nA${i + 1}: ${session.answers[i]}`)
       .join('\n\n');
 
-    const verdictPrompt = `You are an expert recruiter assessing candidate eligibility for a job.
-
-CANDIDATE FULL PROFILE:
-${userContext}
-
-JOB TITLE: ${session.jobTitle}
-
-JOB DESCRIPTION:
-${session.jobDescription}
-
-CANDIDATE Q&A:
-${qaText}
-
-Based on the candidate profile and Q&A above, assess the candidate's eligibility. Return a JSON object with exactly these fields:
-{
-  "verdict": "Eligible" | "Likely Eligible" | "Borderline" | "Not Eligible",
-  "score": <integer 0-100>,
-  "breakdown": [
-    { "criterion": "<requirement name>", "met": true|false, "note": "<one line>" }
-  ],
-  "recommendation": "<2-3 sentence actionable advice for the candidate>"
-}
-
-Return ONLY the JSON object. No markdown, no explanation.`;
-
     logger.info('Eligibility Checker: generating verdict via Gemini', { userId: req.user.id, session_id });
-    const verdictRaw = await generateText(verdictPrompt);
-
-    let verdict;
-    try {
-      const match = verdictRaw.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error('No JSON object found');
-      verdict = JSON.parse(match[0]);
-    } catch (parseErr) {
-      logger.error('Eligibility: failed to parse verdict', { verdictRaw, error: parseErr.message });
-      return res.status(500).json({ error: 'AI returned an unexpected verdict. Please try again.' });
-    }
+    const verdict = await generateEligibilityVerdict({
+      userContext,
+      jobTitle: session.jobTitle,
+      jobDescription: session.jobDescription,
+      qaText,
+    });
 
     // Clean up session
     sessions.delete(session_id);
