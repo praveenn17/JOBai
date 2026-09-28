@@ -239,8 +239,22 @@ export default function ResumeTailor() {
     setJobDescription('');
   };
 
-  const handleDownload = (url, label) => {
-    window.open(url, '_blank');
+  const handleDownload = async (url, label) => {
+    try {
+      // Must use api (not window.open) so the JWT token is sent in the header.
+      const response = await api.get(url, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: response.headers['content-type'] });
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = label;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      toast.error('Download failed. Please try again.');
+    }
   };
 
   return (

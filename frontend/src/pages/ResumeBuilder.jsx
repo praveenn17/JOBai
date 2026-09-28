@@ -131,33 +131,23 @@ export default function ResumeBuilder() {
     setShowPreview(false);
   };
 
-  const downloadFile = (url) => {
+  const downloadFile = async (url) => {
     if (!url) return;
-    const fullUrl = url.startsWith('http') ? url : `${window.location.origin}${url}`;
-    const token = localStorage.getItem('token');
-    
-    // Using fetch to pass Bearer token for protected download route
-    fetch(fullUrl, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {}
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error('Download failed');
-        return res.blob();
-      })
-      .then((blob) => {
-        const blobUrl = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = url.split('/').pop() || 'resume';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        window.URL.revokeObjectURL(blobUrl);
-      })
-      .catch(() => {
-        // Fallback standard window.open
-        window.open(fullUrl, '_blank');
-      });
+    try {
+      // Use api client — uses correct 'jobai_token' key and Authorization header
+      const response = await api.get(url, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: response.headers['content-type'] });
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = url.split('/').pop() || 'resume';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(blobUrl);
+    } catch {
+      toast.error('Download failed. Please try again.');
+    }
   };
 
   return (
