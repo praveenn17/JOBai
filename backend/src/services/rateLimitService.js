@@ -22,11 +22,15 @@ const WINDOW_MS = 12 * 60 * 60 * 1000; // 12 hours in ms
  */
 function countInWindow(userId, actionType) {
   const db = getDb();
-  const cutoff = new Date(Date.now() - WINDOW_MS).toISOString();
+  // Use SQLite's datetime() directly to avoid ISO format mismatch.
+  // SQLite stores performed_at via CURRENT_TIMESTAMP as 'YYYY-MM-DD HH:MM:SS' (no T, no Z).
+  // JS Date.toISOString() produces 'YYYY-MM-DDTHH:MM:SS.mssZ' — 'T' < ' ' in ASCII,
+  // causing performed_at > cutoff to ALWAYS be false (rate limit never enforced).
   const row = db.prepare(`
     SELECT COUNT(*) as count FROM rate_limits
-    WHERE user_id = ? AND action_type = ? AND performed_at > ?
-  `).get(userId, actionType, cutoff);
+    WHERE user_id = ? AND action_type = ?
+    AND performed_at > datetime('now', '-12 hours')
+  `).get(userId, actionType);
   return row.count;
 }
 
@@ -49,15 +53,15 @@ function getQuota(userId, actionType) {
 
   // Find the oldest action in window to compute when next slot opens
   const db = getDb();
-  const cutoff = new Date(Date.now() - WINDOW_MS).toISOString();
   const oldest = db.prepare(`
     SELECT performed_at FROM rate_limits
-    WHERE user_id = ? AND action_type = ? AND performed_at > ?
+    WHERE user_id = ? AND action_type = ?
+    AND performed_at > datetime('now', '-12 hours')
     ORDER BY performed_at ASC LIMIT 1
-  `).get(userId, actionType, cutoff);
+  `).get(userId, actionType);
 
   const nextResetAt = oldest
-    ? new Date(new Date(oldest.performed_at).getTime() + WINDOW_MS).toISOString()
+    ? new Date(new Date(oldest.performed_at.replace(' ', 'T') + (oldest.performed_at.endsWith('Z') ? '' : 'Z')).getTime() + WINDOW_MS).toISOString()
     : null;
 
   return { used, remaining, limit: limit.max, window_hours: limit.windowHours, next_reset_at: nextResetAt, can_proceed: remaining > 0 };
@@ -169,14 +173,15 @@ function getQueueStatus(userId) {
  */
 function getUsageStats(userId) {
   const db = getDb();
-  const cutoff = new Date(Date.now() - WINDOW_MS).toISOString();
+  // Use SQLite's datetime() to avoid ISO format mismatch (see countInWindow fix above)
+  const sqliteCutoff = "datetime('now', '-12 hours')";
 
-  const appCount   = db.prepare("SELECT COUNT(*) as c FROM rate_limits WHERE user_id = ? AND action_type = 'application' AND performed_at > ?").get(userId, cutoff).c;
-  const emailCount = db.prepare("SELECT COUNT(*) as c FROM rate_limits WHERE user_id = ? AND action_type = 'email' AND performed_at > ?").get(userId, cutoff).c;
+  const appCount   = db.prepare("SELECT COUNT(*) as c FROM rate_limits WHERE user_id = ? AND action_type = 'application' AND performed_at > datetime('now', '-12 hours')").get(userId).c;
+  const emailCount = db.prepare("SELECT COUNT(*) as c FROM rate_limits WHERE user_id = ? AND action_type = 'email' AND performed_at > datetime('now', '-12 hours')").get(userId).c;
 
   // Templates used in last 12h
-  const templatesUsed = db.prepare("SELECT template_index, COUNT(*) as count FROM email_send_log WHERE user_id = ? AND sent_at > ? GROUP BY template_index").all(userId, cutoff);
-  const resumeVersions = db.prepare("SELECT resume_variant, COUNT(*) as count FROM email_send_log WHERE user_id = ? AND sent_at > ? GROUP BY resume_variant").all(userId, cutoff);
+  const templatesUsed = db.prepare("SELECT template_index, COUNT(*) as count FROM email_send_log WHERE user_id = ? AND sent_at > datetime('now', '-12 hours') GROUP BY template_index").all(userId);
+  const resumeVersions = db.prepare("SELECT resume_variant, COUNT(*) as count FROM email_send_log WHERE user_id = ? AND sent_at > datetime('now', '-12 hours') GROUP BY resume_variant").all(userId);
 
   return {
     last_12h: {

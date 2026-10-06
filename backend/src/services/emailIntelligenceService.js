@@ -314,13 +314,14 @@ function getPerformanceMetrics(userId) {
 // ─── Emails pending outcome (for feedback UI) ─────────────────────────────────
 function getPendingOutcomes(userId) {
   const db = getDb();
-  // Emails older than 3 days without outcome
-  const cutoff = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  // Emails older than 3 days without outcome.
+  // Use SQLite's datetime() to avoid ISO format mismatch with CURRENT_TIMESTAMP format.
   return db.prepare(`
     SELECT * FROM email_performance
-    WHERE user_id = ? AND outcome IS NULL AND sent_at <= ?
+    WHERE user_id = ? AND outcome IS NULL
+    AND datetime(sent_at) <= datetime('now', '-3 days')
     ORDER BY sent_at ASC
-  `).all(userId, cutoff);
+  `).all(userId);
 }
 
 module.exports = {
